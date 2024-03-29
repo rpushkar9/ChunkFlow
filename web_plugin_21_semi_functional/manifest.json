@@ -1,6 +1,6 @@
 {
     "name": "My Easy Downloader",
-    "version": "0.21.0",
+    "version": "2.1.0",
     "description": "Manage downloads easily",
     "optional_permissions": [ "management" ],
     "permissions": ["downloads", "storage"],
