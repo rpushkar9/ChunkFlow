@@ -1,0 +1,82 @@
+#downloads-list {
+  margin: 10px;
+  font-family: Arial, sans-serif;
+}
+
+.download-item {
+  margin-bottom: 10px;
+  border: 1px solid #ccc;
+  padding: 5px;
+}
+
+.download-name {
+  font-weight: bold;
+}
+
+.download-controls button {
+  margin-right: 5px;
+}
+
+.controls {
+  margin-top: 5px;
+}
+
+.progress-bar {
+  background-color: #f3f3f3;
+  border: 1px solid #ccc;
+  height: 10px;
+  position: relative;
+  width: 100%;
+}
+
+.progress {
+  background-color: #4caf50;
+  height: 100%;
+  position: absolute;
+  text-align: center;
+  line-height: 10px;
+  color: white;
+}
+
+/* Styles for Tabs */
+.tabs {
+    display: flex;
+    justify-content: space-around;
+    border-bottom: 1px solid #ccc;
+    padding: 10px 0;
+}
+
+.tab-button {
+    padding: 5px 15px;
+    border: none;
+    background-color: #f3f3f3;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+.tab-button.active {
+    background-color: #4caf50;
+    color: white;
+}
+
+/* Styles for Tab Contents */
+.tab-content {
+    display: none;
+    padding: 10px;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+/* Styles for Uploaded Files List */
+#uploaded-files-list {
+    margin-top: 10px;
+    border-top: 1px solid #ccc;
+    padding-top: 10px;
+}
+
+#uploaded-files-list div {
+    margin: 5px 0;
+    font-size: 0.9em;
+}

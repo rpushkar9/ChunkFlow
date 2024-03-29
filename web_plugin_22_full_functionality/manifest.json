@@ -1,0 +1,34 @@
+{
+    "name": "My Easy Downloader",
+    "version": "0.22.0",
+    "description": "Manage downloads easily",
+    "optional_permissions": [ "management" ],
+    "permissions": ["downloads", "storage"],
+  
+    "background": {
+      "service_worker": "background.js"
+    },
+    "content_scripts": [
+      {
+        "matches": ["<all_urls>"],
+        "js": ["contentScript.js"]
+      }
+    ],
+  
+    "action": {
+      "default_icon": {
+        "16": "assets/downloadicon.png",
+        "48": "assets/downloadicon.png",
+        "128": "assets/downloadicon.png"
+      },
+      "default_title": "My Easy Downloader",
+      "default_popup": "popup.html"
+    },
+    "icons": {
+      "16": "assets/downloadicon.png",
+      "48": "assets/downloadicon.png",
+      "128": "assets/downloadicon.png"
+    },
+  
+    "manifest_version": 3
+}
