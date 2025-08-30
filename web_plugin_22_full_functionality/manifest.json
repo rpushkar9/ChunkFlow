@@ -1,9 +1,9 @@
 {
-    "name": "My Easy Downloader",
-    "version": "2.2.0",
-    "description": "Manage downloads easily",
+    "name": "ChunkFlow",
+    "version": "2.3.0",
+    "description": "Accelerate downloads & uploads with parallel chunking technology",
     "optional_permissions": [ "management" ],
-    "permissions": ["downloads", "storage"],
+    "permissions": ["downloads", "storage", "contextMenus"],
   
     "background": {
       "service_worker": "background.js"
@@ -11,7 +11,7 @@
     "content_scripts": [
       {
         "matches": ["<all_urls>"],
-        "js": ["contentScript.js"]
+        "js": ["utils.js", "contentScript.js"]
       }
     ],
   
@@ -21,7 +21,7 @@
         "48": "assets/downloadicon.png",
         "128": "assets/downloadicon.png"
       },
-      "default_title": "My Easy Downloader",
+      "default_title": "ChunkFlow - Parallel Downloads",
       "default_popup": "popup.html"
     },
     "icons": {

@@ -2,26 +2,84 @@
 console.log("Content script loaded.");
 
 const handleDownloadClick = (event) => {
-  event.preventDefault(); // Prevent the default action
   const downloadUrl = event.target.href;
+  
+  if (!downloadUrl || !Utils.validateUrl(downloadUrl)) {
+    console.warn("Invalid download URL:", downloadUrl);
+    return;
+  }
+  
   console.log("Download link clicked:", downloadUrl);
-  chrome.runtime.sendMessage({ type: "START_DOWNLOAD", url: downloadUrl });
+  
+  event.preventDefault();
+  chrome.runtime.sendMessage({ type: "START_DOWNLOAD", url: downloadUrl }, (response) => {
+    console.log("Download initiated via extension");
+  });
 };
 
-// Select all download links with 'download' attribute to make it more generic
-const downloadLinks = document.querySelectorAll('a[download]');
+const isDownloadLink = (element) => {
+  if (!element.href) return false;
+  
+  if (element.hasAttribute('download')) return true;
+  
+  const url = element.href.toLowerCase();
+  const downloadExtensions = [
+    '.zip', '.rar', '.7z', '.tar', '.gz',
+    '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+    '.mp3', '.mp4', '.avi', '.mkv', '.mov', '.wmv',
+    '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg',
+    '.exe', '.msi', '.deb', '.rpm', '.dmg', '.pkg',
+    '.iso', '.img', '.bin'
+  ];
+  
+  return downloadExtensions.some(ext => url.includes(ext));
+};
 
-console.log("Found download links:", downloadLinks.length);
+const attachDownloadHandlers = () => {
+  const allLinks = document.querySelectorAll('a:not([data-handler-attached])');
+  const downloadLinks = Array.from(allLinks).filter(isDownloadLink);
+  
+  console.log("Found new download links:", downloadLinks.length);
+  
+  downloadLinks.forEach(link => {
+    link.addEventListener('click', handleDownloadClick);
+    link.setAttribute('data-handler-attached', 'true');
+  });
+};
 
-// Add click event listener to all found download links
-downloadLinks.forEach(link => {
-  link.addEventListener('click', handleDownloadClick);
+attachDownloadHandlers();
+
+const observer = new MutationObserver((mutations) => {
+  let shouldCheck = false;
+  mutations.forEach((mutation) => {
+    if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+      mutation.addedNodes.forEach((node) => {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          if (node.matches('a') || node.querySelector('a')) {
+            shouldCheck = true;
+          }
+        }
+      });
+    }
+  });
+  
+  if (shouldCheck) {
+    setTimeout(attachDownloadHandlers, 100);
+  }
 });
 
-// Optional: Adding context menu support for starting downloads
+observer.observe(document.body, {
+  childList: true,
+  subtree: true
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'CONTEXT_MENU_DOWNLOAD') {
     const downloadUrl = message.url;
-    chrome.runtime.sendMessage({ type: "START_DOWNLOAD", url: downloadUrl });
+    if (Utils.validateUrl(downloadUrl)) {
+      chrome.runtime.sendMessage({ type: "START_DOWNLOAD", url: downloadUrl });
+    } else {
+      console.error("Invalid URL for context menu download:", downloadUrl);
+    }
   }
 });

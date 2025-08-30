@@ -1,8 +1,13 @@
- 
-// Functions and Logic from the new popup.js
+let selectedFile = null;
+
 const updateDownloadsList = (downloads) => {
   const downloadsListDiv = document.getElementById('downloads-list');
   downloadsListDiv.innerHTML = '';
+
+  if (downloads.length === 0) {
+    downloadsListDiv.innerHTML = '<p style="text-align: center; color: #666; padding: 20px;">No active downloads</p>';
+    return;
+  }
 
   downloads.forEach((download) => {
     const downloadDiv = document.createElement('div');
@@ -10,43 +15,25 @@ const updateDownloadsList = (downloads) => {
 
     const nameDiv = document.createElement('div');
     nameDiv.className = 'download-name';
-    const fileName = download.filename.split('/').pop().split('\\').pop();
+    const fileName = download.filename ? download.filename.split('/').pop().split('\\').pop() : 'Unknown file';
     nameDiv.textContent = fileName;
     downloadDiv.appendChild(nameDiv);
 
-    const controlsDiv = document.createElement('div');
-    controlsDiv.className = 'controls';
+    const statusDiv = document.createElement('div');
+    statusDiv.className = 'download-status';
+    const stateText = getDownloadStateText(download.state, download.paused);
+    statusDiv.textContent = `Status: ${stateText}`;
+    downloadDiv.appendChild(statusDiv);
 
-    const pauseResumeButton = document.createElement('button');
-    pauseResumeButton.textContent = download.paused ? "Resume" : "Pause";
-    pauseResumeButton.addEventListener('click', () => {
-      if (download.paused) {
-        resumeDownload(download.id);
-      } else {
-        pauseDownload(download.id);
-      }
-      pauseResumeButton.textContent = download.paused ? "Pause" : "Resume";
-    });
-    controlsDiv.appendChild(pauseResumeButton);
+    const sizeDiv = document.createElement('div');
+    sizeDiv.className = 'download-size';
+    const receivedSize = formatFileSize(download.bytesReceived || 0);
+    const totalSize = download.totalBytes > 0 ? formatFileSize(download.totalBytes) : 'Unknown';
+    sizeDiv.textContent = `${receivedSize} / ${totalSize}`;
+    downloadDiv.appendChild(sizeDiv);
 
-    // ... other controls ...
-
-    const deleteButton = document.createElement('button');
-    deleteButton.textContent = "Delete";
-    deleteButton.addEventListener('click', () => deleteDownload(download.id));
-    controlsDiv.appendChild(deleteButton);
-
-    
-    const restartButton = document.createElement('button');
-    restartButton.textContent = "Restart";
-    restartButton.addEventListener('click', () => restartDownload(download.id));
-    controlsDiv.appendChild(restartButton);
-
-    downloadDiv.appendChild(controlsDiv);
-
-    // Calculate the progress percentage
     const progressPercentage = download.totalBytes > 0 ? (download.bytesReceived / download.totalBytes) * 100 : 0;
-
+    
     const progressBar = document.createElement('div');
     progressBar.className = 'progress-bar';
 
@@ -55,340 +42,302 @@ const updateDownloadsList = (downloads) => {
     progress.style.width = `${progressPercentage}%`;
     progress.textContent = `${Math.round(progressPercentage)}%`;
     progressBar.appendChild(progress);
-
     downloadDiv.appendChild(progressBar);
 
+    const controlsDiv = document.createElement('div');
+    controlsDiv.className = 'controls';
+
+    if (download.state === 'in_progress') {
+      const pauseResumeButton = document.createElement('button');
+      pauseResumeButton.textContent = download.paused ? "Resume" : "Pause";
+      pauseResumeButton.addEventListener('click', () => {
+        if (download.paused) {
+          resumeDownload(download.id);
+        } else {
+          pauseDownload(download.id);
+        }
+      });
+      controlsDiv.appendChild(pauseResumeButton);
+    }
+
+    if (download.state !== 'complete') {
+      const restartButton = document.createElement('button');
+      restartButton.textContent = "Restart";
+      restartButton.addEventListener('click', () => restartDownload(download.id));
+      controlsDiv.appendChild(restartButton);
+    }
+
+    const deleteButton = document.createElement('button');
+    deleteButton.textContent = "Delete";
+    deleteButton.addEventListener('click', () => deleteDownload(download.id));
+    controlsDiv.appendChild(deleteButton);
+
+    if (download.state === 'complete') {
+      const openButton = document.createElement('button');
+      openButton.textContent = "Open";
+      openButton.style.backgroundColor = '#4caf50';
+      openButton.addEventListener('click', () => {
+        chrome.downloads.open(download.id);
+      });
+      controlsDiv.appendChild(openButton);
+    }
+
+    downloadDiv.appendChild(controlsDiv);
     downloadsListDiv.appendChild(downloadDiv);
-    // Additional features from modified popup.js
-    const progressDiv = document.createElement('div');
-    progressDiv.className = 'download-progress';
-    progressDiv.textContent = `Progress: ${download.progress}%`;
-
-    const chunkedDiv = document.createElement('div');
-    chunkedDiv.className = 'download-chunked';
-    chunkedDiv.textContent = `Chunked: ${download.isChunked ? 'Yes' : 'No'}`;
-
-    const actionsDiv = document.createElement('div');
-    actionsDiv.className = 'download-actions';
-
-    const pauseButton = document.createElement('button');
-    pauseButton.textContent = 'Pause';
-    pauseButton.addEventListener('click', () => {
-      chrome.runtime.sendMessage({ type: "PAUSE_DOWNLOAD", downloadId: download.id });
-    });
-
-    const resumeButton = document.createElement('button');
-    resumeButton.textContent = 'Resume';
-    resumeButton.addEventListener('click', () => {
-      chrome.runtime.sendMessage({ type: "RESUME_DOWNLOAD", downloadId: download.id });
-    });
-
-    actionsDiv.appendChild(pauseButton);
-    actionsDiv.appendChild(resumeButton);
-    actionsDiv.appendChild(restartButton);
-    actionsDiv.appendChild(deleteButton);
-
-    downloadDiv.appendChild(progressDiv);
-    downloadDiv.appendChild(chunkedDiv);
-    downloadDiv.appendChild(actionsDiv);
-
-
-    // ... rest of the code ...
   });
 };
 
+const getDownloadStateText = (state, paused) => {
+  if (paused) return 'Paused';
+  switch (state) {
+    case 'in_progress': return 'Downloading';
+    case 'complete': return 'Complete';
+    case 'interrupted': return 'Failed';
+    default: return state || 'Unknown';
+  }
+};
 
-// Function to pause a download
 const pauseDownload = (downloadId) => {
   chrome.downloads.search({ id: downloadId }, ([download]) => {
-    if (download.state === 'in_progress' && !download.paused) {
-      chrome.downloads.pause(downloadId, fetchDownloads);
+    if (download && download.state === 'in_progress' && !download.paused) {
+      chrome.downloads.pause(downloadId, () => {
+        fetchDownloads();
+      });
     }
   });
 };
 
+const resumeDownload = (downloadId) => {
+  chrome.runtime.sendMessage({ type: "RESUME_DOWNLOAD", downloadId }, () => {
+    fetchDownloads();
+  });
+};
 
-// Function to restart a download
 const restartDownload = (downloadId) => {
   chrome.runtime.sendMessage({ type: "RESTART_DOWNLOAD", downloadId });
 };
 
-
-// Function to delete a download
 const deleteDownload = (downloadId) => {
   chrome.runtime.sendMessage({ type: "DELETE_DOWNLOAD", downloadId });
-  fetchDownloads();
+  setTimeout(fetchDownloads, 500);
 };
 
-// Function to resume a download
-const resumeDownload = (downloadId) => {
-  chrome.runtime.sendMessage({ type: "RESUME_DOWNLOAD", downloadId }, fetchDownloads);
-};
-
-
-
-// Function to fetch current downloads from Chrome's download manager
 const fetchDownloads = () => {
   chrome.downloads.search({}, (downloads) => {
-    updateDownloadsList(downloads);
-    //updateDownloadsList(downloads.filter(download => download.state !== 'complete'));
+    const recentDownloads = downloads.filter(download => {
+      const hourAgo = Date.now() - (60 * 60 * 1000);
+      return download.startTime && new Date(download.startTime).getTime() > hourAgo;
+    });
+    updateDownloadsList(recentDownloads);
   });
 };
 
-// Connect to the background script
+const handleFileUpload = async () => {
+  const serverUrl = document.getElementById("server-url").value.trim();
+  
+  if (!selectedFile) {
+    showMessage("Please select a file before uploading.", "error");
+    return;
+  }
+  
+  if (!serverUrl) {
+    showMessage("Please enter a server URL.", "error");
+    return;
+  }
+
+  try {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      chrome.runtime.sendMessage({
+        type: "UPLOAD_FILE",
+        fileData: e.target.result,
+        fileName: selectedFile.name,
+        fileSize: selectedFile.size,
+        fileType: selectedFile.type,
+        uploadUrl: serverUrl
+      }, response => {
+        if (response && response.success) {
+          showMessage("Upload successful!", "success");
+          storeUploadedFile(selectedFile);
+          clearFileSelection();
+        } else {
+          showMessage(`Upload failed: ${response?.error || 'Unknown error'}`, "error");
+        }
+      });
+    };
+    reader.readAsArrayBuffer(selectedFile);
+  } catch (error) {
+    showMessage(`Upload failed: ${error.message}`, "error");
+  }
+};
+
+const storeUploadedFile = (file) => {
+  chrome.storage.local.get("uploadedFiles", (data) => {
+    const uploadedFiles = data.uploadedFiles || [];
+    uploadedFiles.push({ 
+      name: file.name, 
+      size: file.size, 
+      type: file.type,
+      timestamp: Date.now()
+    });
+    chrome.storage.local.set({ uploadedFiles }, () => {
+      displayUploadedFiles();
+    });
+  });
+};
+
+const clearFileSelection = () => {
+  selectedFile = null;
+  document.getElementById('file-input').value = '';
+  document.getElementById('selected-file-name').textContent = '';
+  document.getElementById('file-name').textContent = '';
+  document.getElementById('file-preview').style.display = 'none';
+};
+
+const showMessage = (text, type) => {
+  const messageDiv = document.createElement('div');
+  messageDiv.className = `message ${type}`;
+  messageDiv.textContent = text;
+  messageDiv.style.cssText = `
+    padding: 10px;
+    margin: 10px 0;
+    border-radius: 4px;
+    ${type === 'error' ? 'background-color: #ffe6e6; color: #d00; border: 1px solid #ffb3b3;' : 'background-color: #e6ffe6; color: #0a0; border: 1px solid #b3ffb3;'}
+  `;
+  
+  const container = document.querySelector('.tab-content.active');
+  container.insertBefore(messageDiv, container.firstChild);
+  
+  setTimeout(() => {
+    if (messageDiv.parentNode) {
+      messageDiv.parentNode.removeChild(messageDiv);
+    }
+  }, 5000);
+};
+
+const displayUploadedFiles = () => {
+  chrome.storage.local.get('uploadedFiles', (data) => {
+    const uploadedFiles = data.uploadedFiles || [];
+    const uploadedFilesList = document.getElementById('uploaded-files-list');
+    uploadedFilesList.innerHTML = '';
+    
+    if (uploadedFiles.length === 0) {
+      uploadedFilesList.innerHTML = '<p>No uploaded files yet.</p>';
+      return;
+    }
+    
+    uploadedFiles.forEach(file => {
+      const listItem = document.createElement('div');
+      listItem.className = 'uploaded-file-item';
+      listItem.innerHTML = `
+        <strong>${file.name}</strong><br>
+        Size: ${formatFileSize(file.size)}<br>
+        Type: ${file.type}<br>
+        Uploaded: ${new Date(file.timestamp).toLocaleString()}
+      `;
+      uploadedFilesList.appendChild(listItem);
+    });
+  });
+};
+
+const formatFileSize = Utils.formatFileSize;
+
+document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("downloads-tab").addEventListener("click", () => {
+    document.getElementById("downloads-section").classList.add("active");
+    document.getElementById("uploads-section").classList.remove("active");
+    document.getElementById("downloads-tab").classList.add("active");
+    document.getElementById("uploads-tab").classList.remove("active");
+  });
+
+  document.getElementById("uploads-tab").addEventListener("click", () => {
+    document.getElementById("uploads-section").classList.add("active");
+    document.getElementById("downloads-section").classList.remove("active");
+    document.getElementById("uploads-tab").classList.add("active");
+    document.getElementById("downloads-tab").classList.remove("active");
+    displayUploadedFiles();
+  });
+
+  document.getElementById('select-file-button').addEventListener('click', () => {
+    document.getElementById('file-input').click();
+  });
+
+  document.getElementById('file-input').addEventListener('change', (event) => {
+    selectedFile = event.target.files[0];
+    if (selectedFile) {
+      document.getElementById('selected-file-name').textContent = selectedFile.name;
+      document.getElementById('file-name').textContent = `Selected File: ${selectedFile.name}`;
+      
+      const filePreview = document.getElementById('file-preview');
+      if (selectedFile.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          filePreview.src = e.target.result;
+          filePreview.style.display = 'block';
+        };
+        reader.readAsDataURL(selectedFile);
+      } else {
+        filePreview.style.display = 'none';
+      }
+    }
+  });
+
+  document.getElementById('upload-button').addEventListener('click', handleFileUpload);
+
+  chrome.runtime.sendMessage({ type: 'GET_UPLOADED_FILES' }, response => {
+    if (response && response.uploadedFiles) {
+      displayUploadedFiles();
+    }
+  });
+
+  fetchDownloads();
+});
+
 const port = chrome.runtime.connect();
 
-// Listen for download updates from the background script
 port.onMessage.addListener((message) => {
   if (message.type === "DOWNLOAD_UPDATE") {
     fetchDownloads();
-  }
-});
-
-
-// Fetch current downloads on popup load
-fetchDownloads();
-//<all_urls>
-        //https://file-examples.com/*
-
-// Function to continuously update the downloads list
-const updateInterval = setInterval(fetchDownloads, 1000);
-
-
-port.onMessage.addListener((message) => {
-    if (message.type === 'DOWNLOAD_READY') {
-        const downloadLink = document.createElement('a');
-        downloadLink.href = message.url;
-        downloadLink.textContent = 'Download Merged File';
-        downloadLink.download = 'downloaded_file';  // You can provide a better name based on the file's original name
-        document.body.appendChild(downloadLink);
-
-        // Add visual indication for chunked downloads
-        if (message.isChunked) {
-          const chunkedLabel = document.createElement('span');
-          chunkedLabel.textContent = " (Chunked)";
-          chunkedLabel.style.color = 'blue'; // Optional: Style the label as you prefer
-          document.body.appendChild(chunkedLabel);
-        }
-    } else if (message.type === 'ERROR') {
-        const errorMessage = document.createElement('p');
-        errorMessage.textContent = message.message;
-        errorMessage.style.color = 'red';
-        document.body.appendChild(errorMessage);
-    }
-});
-
-// Upload functionality
-document.getElementById("upload-button").addEventListener("click", () => {
-  //document.getElementById("file-input").click();
-});
-
-document.getElementById("file-input").addEventListener("change", (event) => {
-  const selectedFile = event.target.files[0];
-  if (selectedFile) {
-    console.log("Selected file:", selectedFile.name);
-    // TODO: Add more logic here to handle the selected file
-  }
-});
-
-// Function to handle the file upload
-let handleFileUpload = async () => {
-    const fileInput = document.getElementById("file-input");
-    const serverUrl = document.getElementById("server-url").value;
-    const selectedFile = fileInput.files[0];
-
-    if (selectedFile && serverUrl) {
-        const formData = new FormData();
-        formData.append("file", selectedFile);
-
-        try {
-            const response = await fetch(serverUrl, {
-                method: "POST",
-                body: formData
-            });
-
-            const result = await response.json();
-
-            // Handle the server's response (e.g., show a success message)
-            console.log(result);
-
-        } catch (error) {
-            // Handle errors (e.g., show an error message)
-            console.error("File upload failed:", error);
-        }
-    } else {
-        console.error("Please select a file and enter a valid server URL.");
-    }
-};
-
-document.getElementById("upload-button").addEventListener("click", handleFileUpload);
-document.getElementById("file-input").addEventListener("change", function() {
-    const fileInput = this;
-    const selectedFile = fileInput.files[0];
-
-    if (selectedFile) {
-        // Displaying the file name
-        document.getElementById("file-name").textContent = "Selected File: " + selectedFile.name;
-
-        // Checking if the file is an image and displaying a preview
-        if (selectedFile.type && selectedFile.type.startsWith("image/")) {
-            const filePreview = document.getElementById("file-preview");
-            filePreview.style.display = "block";
-            filePreview.src = URL.createObjectURL(selectedFile);
-        } else {
-            document.getElementById("file-preview").style.display = "none";
-        }
-    }
-});
-
-document.getElementById("upload-button").addEventListener("click", handleFileUpload);
-
-// Logic for file preview and metadata display
-document.getElementById("file-input").addEventListener("change", function() {
-    const fileInput = this;
-    const selectedFile = fileInput.files[0];
-
-    if (selectedFile) {
-        // Displaying the file name
-        document.getElementById("file-name").textContent = "Selected File: " + selectedFile.name;
-
-        // Checking if the file is an image and displaying a preview
-        if (selectedFile.type && selectedFile.type.startsWith("image/")) {
-            const filePreview = document.getElementById("file-preview");
-            filePreview.style.display = "block";
-            filePreview.src = URL.createObjectURL(selectedFile);
-        } else {
-            document.getElementById("file-preview").style.display = "none";
-        }
-    }
-});
-
-// Functions and Logic from the earlier modifications
-document.getElementById("downloads-tab").addEventListener("click", function() {
-    document.getElementById("downloads-section").classList.add("active");
-    document.getElementById("uploads-section").classList.remove("active");
-    this.classList.add("active");
-    document.getElementById("uploads-tab").classList.remove("active");
-});
-
-document.getElementById("uploads-tab").addEventListener("click", function() {
-    document.getElementById("uploads-section").classList.add("active");
-    document.getElementById("downloads-section").classList.remove("active");
-    this.classList.add("active");
-    document.getElementById("downloads-tab").classList.remove("active");
+  } else if (message.type === 'DOWNLOAD_READY') {
+    const downloadLink = document.createElement('a');
+    downloadLink.href = message.url;
+    downloadLink.textContent = 'Download Merged File';
+    downloadLink.download = message.filename || 'downloaded_file';
+    downloadLink.style.cssText = 'display: block; margin: 10px 0; padding: 8px; background: #4caf50; color: white; text-decoration: none; border-radius: 4px; text-align: center;';
     
-document.addEventListener("DOMContentLoaded", function() {
-    chrome.runtime.sendMessage({ type: 'GET_UPLOADED_FILES' }, response => {
-        displayUploadedFiles(response.uploadedFiles);
-    });
+    const downloadsSection = document.getElementById('downloads-section');
+    downloadsSection.insertBefore(downloadLink, downloadsSection.firstChild);
+
+    if (message.isChunked) {
+      const chunkedLabel = document.createElement('span');
+      chunkedLabel.textContent = " (Chunked Download)";
+      chunkedLabel.style.color = 'blue';
+      chunkedLabel.style.fontWeight = 'bold';
+      downloadLink.appendChild(chunkedLabel);
+    }
+    
+    setTimeout(() => {
+      if (downloadLink.parentNode) {
+        downloadLink.parentNode.removeChild(downloadLink);
+      }
+    }, 30000);
+  } else if (message.type === 'ERROR') {
+    showMessage(message.message, 'error');
+  }
 });
 
-});
+let updateInterval = setInterval(fetchDownloads, 1000);
 
-// Existing logic for updating the downloads list, handling file upload, and file preview and metadata display...
-// ... (this part remains unchanged)
-
-function displayUploadedFiles(files) {
-  const uploadedFilesList = document.getElementById('uploaded-files-list');
-  uploadedFilesList.innerHTML = '';  // Clear the list before populating
-  chrome.storage.local.get('uploadedFiles', function(data) {
-      const uploadedFiles = data.uploadedFiles || [];
-      uploadedFiles.forEach(file => {
-          const listItem = document.createElement('li');
-          listItem.textContent = `${file.name} - ${file.size} bytes`;  // Ensure 'name' and 'size' properties exist
-          uploadedFilesList.appendChild(listItem);
-      });
+const adjustUpdateFrequency = () => {
+  chrome.downloads.search({ state: 'in_progress' }, (downloads) => {
+    clearInterval(updateInterval);
+    const frequency = downloads.length > 0 ? 500 : 2000;
+    updateInterval = setInterval(fetchDownloads, frequency);
   });
-}
-
-
-        const uploadsSection = document.getElementById("uploads-section");
-
-    
-//to save the uploaded file details to storage after a successful upload
-let originalHandleFileUpload = handleFileUpload;
-handleFileUpload = async function() {
-    const result = await originalHandleFileUpload();
-    if (result && result.success) {
-        const fileInput = document.getElementById("file-input");
-        const selectedFile = fileInput.files[0];
-        chrome.storage.local.get("uploadedFiles", function(data) {
-            const uploadedFiles = data.uploadedFiles || [];
-            uploadedFiles.push({ name: selectedFile.name, size: selectedFile.size, type: selectedFile.type });
-            chrome.storage.local.set({ uploadedFiles: uploadedFiles });
-            displayUploadedFiles();
-        });
-    }
-}
-
-
-
-
-// Modified handleFileUpload function to just handle the upload
-let selectedFile;
-document.getElementById("file-input").addEventListener("change", function() {
-    selectedFile = this.files[0];
-    // You can add additional logic here if needed, like displaying the selected file name
-});
-
-// Adjusting the handleFileUpload function
-
-handleFileUpload = async function() {
-    if (!selectedFile) {
-        alert("Please select a file before uploading.");
-        return;
-    }
-    // Rest of the upload logic remains unchanged
-    originalHandleFileUpload();
 };
 
+setInterval(adjustUpdateFrequency, 5000);
 
-
-document.getElementById('upload-button').addEventListener('click', function() {
-    const selectedFile = document.getElementById('file-input').files[0];
-    const uploadUrl = document.getElementById('server-url').value;
-    if (selectedFile && uploadUrl) {
-        chrome.runtime.sendMessage({
-            type: "UPLOAD_FILE",
-            file: selectedFile,  // This assumes the file object can be sent as a message, which might not be possible due to limitations in the messaging API. A workaround might be needed.
-            uploadUrl: uploadUrl
-        }, response => {
-            if (response.success) {
-                console.log('Upload successful');
-            } else {
-                console.error('Upload failed:', response.error);
-            }
-        });
-    } else {
-        console.error('File not selected or upload URL not provided');
-    }
-});
-
-// File selection logic
-document.getElementById('select-file-button').addEventListener('click', function() {
-    document.getElementById('file-input').click();
-});
-document.getElementById('file-input').addEventListener('change', function() {
-    const selectedFile = document.getElementById('file-input').files[0];
-    if (selectedFile) {
-        document.getElementById('selected-file-name').textContent = selectedFile.name;
-        // Display a preview if the selected file is an image
-        const filePreview = document.getElementById('file-preview');
-        if (selectedFile.type.startsWith('image/')) {
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                filePreview.src = e.target.result;
-                filePreview.style.display = 'block';
-            }
-            reader.readAsDataURL(selectedFile);
-        } else {
-            filePreview.style.display = 'none';
-        }
-    }
-});
-
-document.addEventListener("DOMContentLoaded", function() {
-    chrome.runtime.sendMessage({ type: 'GET_UPLOADED_FILES' }, response => {
-        displayUploadedFiles(response.uploadedFiles);
-    });
+window.addEventListener('beforeunload', () => {
+  clearInterval(updateInterval);
 });

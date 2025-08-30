@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="popup.css">
-  <title>Download Manager</title>
+  <title>ChunkFlow - Parallel Downloads</title>
 </head>
 <body>
   <div class="tabs">
@@ -21,18 +21,22 @@
 
   <div id="uploads-section" class="tab-content">
     <input type="text" id="server-url" placeholder="Enter server URL">
-    <button id="select-file-button">Select File</button><br><button id="upload-button">Upload File</button>
+    <div class="button-row">
+      <button id="select-file-button">Select File</button>
+      <button id="upload-button">Upload File</button>
+    </div>
     <input type="file" id="file-input" style="display: none;">
-<div id="selected-file-name"></div>
+    <div id="selected-file-name"></div>
     <div id="file-name"></div>
     <div id="file-preview-container">
-      <img id="file-preview" style="max-width: 200px; display: none;">
+      <img id="file-preview" style="display: none;">
     </div>
     <div id="uploaded-files-list">
       <!-- List of Uploads-->
     </div>
   </div>
 
+  <script src="utils.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
