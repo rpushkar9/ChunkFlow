@@ -1,0 +1,18 @@
+---
+description: Core repo rules for ChunkFlow. Always apply these.
+globs:
+  - "**/*"
+---
+
+Follow the repo's CLAUDE.md as the source of truth.
+
+Behavior:
+- Prefer minimal diffs; do not refactor unrelated code.
+- If you need to add tooling (npm, eslint, jest, etc.), ask first and justify.
+- Always explain: what changed, files touched, and how to manually verify.
+
+Output after changes:
+- Summary
+- Files touched
+- Manual test steps (Chrome MV3 load/reload)
+- Risks / follow-ups

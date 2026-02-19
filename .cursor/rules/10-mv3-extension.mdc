@@ -1,0 +1,15 @@
+---
+description: Chrome MV3 extension constraints + best practices for this codebase.
+globs:
+  - "web_plugin_22_full_functionality/**"
+  - "web_plugin_22_full_functionality/**/*"
+---
+
+Chrome Extension MV3 notes:
+- background.js is a service worker and may unload when idle; avoid relying on long-lived in-memory state.
+- Prefer message-passing patterns and chrome.storage for persistence if needed.
+- No build step: changes take effect after reloading extension in chrome://extensions.
+
+When editing:
+- Keep changes local to the requested behavior.
+- Preserve existing naming + patterns in background/content/popup.
