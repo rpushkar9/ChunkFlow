@@ -242,7 +242,32 @@ const displayUploadedFiles = () => {
 
 const formatFileSize = Utils.formatFileSize;
 
+const loadChunkCount = () => {
+  chrome.storage.local.get({ chunkCount: 10 }, (data) => {
+    const val = Utils.clampChunkCount(data.chunkCount);
+    const input = document.getElementById('chunk-count');
+    if (input) input.value = val;
+  });
+};
+
+const saveChunkCount = (value) => {
+  const val = Utils.clampChunkCount(value);
+  chrome.storage.local.set({ chunkCount: val }, () => {
+    const input = document.getElementById('chunk-count');
+    if (input) input.value = val;
+  });
+};
+
 document.addEventListener("DOMContentLoaded", () => {
+  loadChunkCount();
+
+  const chunkCountInput = document.getElementById('chunk-count');
+  if (chunkCountInput) {
+    chunkCountInput.addEventListener('change', () => {
+      saveChunkCount(chunkCountInput.value);
+    });
+  }
+
   document.getElementById("downloads-tab").addEventListener("click", () => {
     document.getElementById("downloads-section").classList.add("active");
     document.getElementById("uploads-section").classList.remove("active");

@@ -5,6 +5,26 @@ body {
   padding: 0;
 }
 
+.chunk-count-row {
+  padding: 10px 10px 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chunk-count-row label {
+  font-size: 13px;
+  color: #333;
+}
+
+.chunk-count-row #chunk-count {
+  width: 56px;
+  padding: 4px 6px;
+  font-size: 13px;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+}
+
 #downloads-list {
   padding: 10px;
 }
