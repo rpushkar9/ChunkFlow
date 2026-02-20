@@ -1,6 +1,33 @@
 let selectedFile = null;
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Return a concise human-readable string for a download's startTime ISO string.
+ * Examples: "Just now", "5m ago", "Today 2:30 PM", "Yesterday 9:14 AM", "Feb 3 11:00 AM"
+ */
+const formatDownloadTime = (isoString) => {
+  if (!isoString) return '';
+  const date = new Date(isoString);
+  const now  = new Date();
+  const diffMin = Math.floor((now - date) / 60000);
+
+  if (diffMin < 1)  return 'Just now';
+  if (diffMin < 60) return `${diffMin}m ago`;
+
+  const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const todayStr     = now.toDateString();
+  const yesterdayStr = new Date(now - 86400000).toDateString();
+
+  if (date.toDateString() === todayStr)     return `Today ${time}`;
+  if (date.toDateString() === yesterdayStr) return `Yesterday ${time}`;
+
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ` ${time}`;
+};
+
+// ---------------------------------------------------------------------------
 // Download list rendering
 // ---------------------------------------------------------------------------
 
@@ -19,7 +46,7 @@ const updateDownloadsList = (downloads, modes = {}, activeFetches = []) => {
   const pendingFetches = activeFetches.filter(e => e.startTime > fiveMinutesAgo);
 
   if (downloads.length === 0 && pendingFetches.length === 0) {
-    downloadsListDiv.innerHTML = '<p style="text-align: center; color: #666; padding: 20px;">No active downloads</p>';
+    downloadsListDiv.innerHTML = '<p style="text-align: center; color: #666; padding: 20px;">No downloads yet</p>';
     return;
   }
 
@@ -41,6 +68,12 @@ const updateDownloadsList = (downloads, modes = {}, activeFetches = []) => {
     statusDiv.className = 'download-status';
     statusDiv.textContent = `Status: ${getDownloadStateText(download.state, download.paused)}`;
     downloadDiv.appendChild(statusDiv);
+
+    // Timestamp
+    const timeDiv = document.createElement('div');
+    timeDiv.className = 'download-time';
+    timeDiv.textContent = formatDownloadTime(download.startTime);
+    downloadDiv.appendChild(timeDiv);
 
     // Download mode badge (chunked / normal / fallback) — only shown if mode is known
     const mode = modes[String(download.id)];
@@ -186,29 +219,24 @@ const deleteDownload = (downloadId) => {
 };
 
 /**
- * Fetch recent downloads (last hour) from Chrome's downloads API,
- * then read downloadModes + activeChunkFetches from storage and render the list.
+ * Fetch the 50 most-recent downloads from Chrome's downloads API (all time,
+ * not just the last hour), then read downloadModes + activeChunkFetches from
+ * storage and render the full list — active, paused, completed, and failed.
  *
- * A generation counter is used to discard results from superseded calls so that
- * rapid-fire DOWNLOAD_UPDATE messages (e.g. during badge write + onCreated racing)
- * never overwrite a fresher render with stale data.
+ * A generation counter discards results from superseded calls so that
+ * rapid-fire DOWNLOAD_UPDATE messages never overwrite a fresher render.
  */
 let fetchGeneration = 0;
 
 const fetchDownloads = () => {
   const gen = ++fetchGeneration;
 
-  chrome.downloads.search({}, (downloads) => {
+  chrome.downloads.search({ orderBy: ['-startTime'], limit: 50 }, (downloads) => {
     if (gen !== fetchGeneration) return; // superseded
-
-    const hourAgo = Date.now() - (60 * 60 * 1000);
-    const recentDownloads = downloads.filter(d =>
-      d.startTime && new Date(d.startTime).getTime() > hourAgo
-    );
 
     chrome.storage.local.get({ downloadModes: {}, activeChunkFetches: [] }, (data) => {
       if (gen !== fetchGeneration) return; // superseded
-      updateDownloadsList(recentDownloads, data.downloadModes, data.activeChunkFetches);
+      updateDownloadsList(downloads, data.downloadModes, data.activeChunkFetches);
     });
   });
 };
