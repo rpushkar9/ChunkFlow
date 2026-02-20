@@ -232,3 +232,32 @@ body {
   font-size: 13px;
   font-weight: 500;
 }
+
+/* Download mode badge — shows whether a download used chunked, normal, or fallback path */
+.download-mode-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  margin: 4px 0 2px;
+  letter-spacing: 0.2px;
+}
+
+.badge-chunked {
+  background: #e3f2fd;
+  color: #1565c0;
+  border: 1px solid #bbdefb;
+}
+
+.badge-normal {
+  background: #f5f5f5;
+  color: #555;
+  border: 1px solid #e0e0e0;
+}
+
+.badge-fallback {
+  background: #fff8e1;
+  color: #e65100;
+  border: 1px solid #ffe0b2;
+}
