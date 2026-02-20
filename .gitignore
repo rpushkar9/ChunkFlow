@@ -12,3 +12,6 @@ coverage/
 .idea/
 *.swp
 *.swo
+
+# MCP / AI tooling
+.serena/
