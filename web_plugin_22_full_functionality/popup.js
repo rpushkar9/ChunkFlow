@@ -8,12 +8,17 @@ let selectedFile = null;
  * Render the downloads list.
  * modes — object from chrome.storage.local 'downloadModes', keyed by string download ID.
  *   Values: 'chunked' | 'normal' | 'fallback'
+ * activeFetches — array of { url, startTime } for chunk fetches still assembling
+ *   (no Chrome download item exists yet for these).
  */
-const updateDownloadsList = (downloads, modes = {}) => {
+const updateDownloadsList = (downloads, modes = {}, activeFetches = []) => {
   const downloadsListDiv = document.getElementById('downloads-list');
   downloadsListDiv.innerHTML = '';
 
-  if (downloads.length === 0) {
+  const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+  const pendingFetches = activeFetches.filter(e => e.startTime > fiveMinutesAgo);
+
+  if (downloads.length === 0 && pendingFetches.length === 0) {
     downloadsListDiv.innerHTML = '<p style="text-align: center; color: #666; padding: 20px;">No active downloads</p>';
     return;
   }
@@ -116,6 +121,31 @@ const updateDownloadsList = (downloads, modes = {}) => {
     downloadDiv.appendChild(controlsDiv);
     downloadsListDiv.appendChild(downloadDiv);
   });
+
+  // Show "preparing" placeholders for chunk fetches that haven't produced a
+  // Chrome download item yet (chunks still assembling in the service worker).
+  // Entries older than 5 minutes are treated as orphaned and skipped.
+  pendingFetches.forEach(e => {
+    let displayName;
+    try {
+      displayName = new URL(e.url).pathname.split('/').pop() || e.url;
+    } catch {
+      displayName = e.url;
+    }
+
+    const pendingDiv = document.createElement('div');
+    pendingDiv.className = 'download-item';
+
+    pendingDiv.innerHTML = `
+      <div class="download-name">${displayName}</div>
+      <div class="download-status">Status: Fetching chunks&hellip;</div>
+      <div class="download-mode-badge badge-chunked">⚡ Chunked (preparing)</div>
+      <div class="progress-bar">
+        <div class="progress" style="width:100%;opacity:0.4;">assembling…</div>
+      </div>
+    `;
+    downloadsListDiv.appendChild(pendingDiv);
+  });
 };
 
 // ---------------------------------------------------------------------------
@@ -157,16 +187,28 @@ const deleteDownload = (downloadId) => {
 
 /**
  * Fetch recent downloads (last hour) from Chrome's downloads API,
- * then read downloadModes from storage and render the list with mode badges.
+ * then read downloadModes + activeChunkFetches from storage and render the list.
+ *
+ * A generation counter is used to discard results from superseded calls so that
+ * rapid-fire DOWNLOAD_UPDATE messages (e.g. during badge write + onCreated racing)
+ * never overwrite a fresher render with stale data.
  */
+let fetchGeneration = 0;
+
 const fetchDownloads = () => {
+  const gen = ++fetchGeneration;
+
   chrome.downloads.search({}, (downloads) => {
+    if (gen !== fetchGeneration) return; // superseded
+
     const hourAgo = Date.now() - (60 * 60 * 1000);
     const recentDownloads = downloads.filter(d =>
       d.startTime && new Date(d.startTime).getTime() > hourAgo
     );
-    chrome.storage.local.get({ downloadModes: {} }, (data) => {
-      updateDownloadsList(recentDownloads, data.downloadModes);
+
+    chrome.storage.local.get({ downloadModes: {}, activeChunkFetches: [] }, (data) => {
+      if (gen !== fetchGeneration) return; // superseded
+      updateDownloadsList(recentDownloads, data.downloadModes, data.activeChunkFetches);
     });
   });
 };

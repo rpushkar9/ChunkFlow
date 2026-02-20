@@ -63,6 +63,8 @@ function getFilename(response, fallbackUrl) {
  * Persist a download's mode (chunked | normal | fallback) in chrome.storage.local
  * under the key 'downloadModes', keyed by string download ID.
  * Capped at 100 entries (oldest-first eviction) to avoid unbounded growth.
+ * Notifies the popup AFTER the write so the badge is already in storage when
+ * fetchDownloads reads it (fixes the race that caused missing mode badges).
  */
 function storeDownloadMode(downloadId, mode) {
   chrome.storage.local.get({ downloadModes: {} }, (data) => {
@@ -70,7 +72,38 @@ function storeDownloadMode(downloadId, mode) {
     modes[String(downloadId)] = mode;
     const keys = Object.keys(modes);
     if (keys.length > 100) delete modes[keys[0]];
-    chrome.storage.local.set({ downloadModes: modes });
+    chrome.storage.local.set({ downloadModes: modes }, () => {
+      if (popupPort) popupPort.postMessage({ type: 'DOWNLOAD_UPDATE' });
+    });
+  });
+}
+
+/**
+ * Add a URL to the activeChunkFetches list so the popup can show a
+ * "preparing" placeholder while chunks are being assembled (before Chrome
+ * creates a download item).
+ */
+function addActiveChunkFetch(url) {
+  return new Promise(resolve => {
+    chrome.storage.local.get({ activeChunkFetches: [] }, (data) => {
+      // Deduplicate in case of rapid re-clicks
+      const list = data.activeChunkFetches.filter(e => e.url !== url);
+      list.push({ url, startTime: Date.now() });
+      chrome.storage.local.set({ activeChunkFetches: list }, () => {
+        if (popupPort) popupPort.postMessage({ type: 'DOWNLOAD_UPDATE' });
+        resolve();
+      });
+    });
+  });
+}
+
+/** Remove a URL from activeChunkFetches once its Chrome download item exists. */
+function removeActiveChunkFetch(url) {
+  return new Promise(resolve => {
+    chrome.storage.local.get({ activeChunkFetches: [] }, (data) => {
+      const list = data.activeChunkFetches.filter(e => e.url !== url);
+      chrome.storage.local.set({ activeChunkFetches: list }, resolve);
+    });
   });
 }
 
@@ -78,110 +111,111 @@ function storeDownloadMode(downloadId, mode) {
 // Download engine
 // ---------------------------------------------------------------------------
 
-function downloadInChunks(url, numberOfChunks = 10) {
+async function downloadInChunks(url, numberOfChunks = 10) {
   console.log(`[ChunkFlow] downloadInChunks: ${numberOfChunks} chunks for ${url}`);
 
-  return fetch(url, { method: 'HEAD', credentials: 'include' })
-    .then(response => {
-      console.log('[ChunkFlow] HEAD response received');
+  // Show a "preparing" placeholder in the popup immediately, before Chrome
+  // creates a download item (which only happens after all chunks are assembled).
+  await addActiveChunkFetch(url);
 
-      // Capture the URL after redirects so all chunk GETs go to the same
-      // CDN endpoint and use the same auth tokens (critical for Google Drive etc.)
-      const finalUrl = response.url || url;
-      const filename  = getFilename(response, url);
+  try {
+    const headResponse = await fetchWithRetry(url, { method: 'HEAD', credentials: 'include' });
+    console.log('[ChunkFlow] HEAD response received');
 
-      if (response.headers.get('Accept-Ranges') !== 'bytes') {
-        console.log('[ChunkFlow] No range support — using normal download');
-        chrome.downloads.download({ url, filename }, (id) => {
-          if (id) storeDownloadMode(id, 'normal');
-        });
-        return null;
-      }
+    // Capture the URL after redirects so all chunk GETs go to the same
+    // CDN endpoint and use the same auth tokens (critical for Google Drive etc.)
+    const finalUrl = headResponse.url || url;
+    const filename  = getFilename(headResponse, url);
 
-      const fileSize = parseInt(response.headers.get('Content-Length'));
-      const mimeType = response.headers.get('Content-Type') || 'application/octet-stream';
+    if (headResponse.headers.get('Accept-Ranges') !== 'bytes') {
+      console.log('[ChunkFlow] No range support — using normal download');
+      await removeActiveChunkFetch(url);
+      chrome.downloads.download({ url, filename }, (id) => {
+        if (id) storeDownloadMode(id, 'normal');
+      });
+      return;
+    }
 
-      if (!fileSize || fileSize <= 0) {
-        throw new Error('Invalid or missing Content-Length header');
-      }
+    const fileSize = parseInt(headResponse.headers.get('Content-Length'));
+    const mimeType = headResponse.headers.get('Content-Type') || 'application/octet-stream';
 
-      // Skip in-memory chunking for large files to avoid OOM in the service worker.
-      if (fileSize > CHUNK_MAX_BYTES) {
-        console.log(`[ChunkFlow] File too large for in-memory chunking ` +
-          `(${Utils.formatFileSize(fileSize)} > ${Utils.formatFileSize(CHUNK_MAX_BYTES)}) — using normal download`);
-        chrome.downloads.download({ url, filename }, (id) => {
-          if (id) storeDownloadMode(id, 'normal');
-        });
-        return null;
-      }
+    if (!fileSize || fileSize <= 0) {
+      throw new Error('Invalid or missing Content-Length header');
+    }
 
-      return { fileSize, mimeType, finalUrl, filename };
-    })
-    .then((result) => {
-      if (!result) return null;
+    // Skip in-memory chunking for large files to avoid OOM in the service worker.
+    if (fileSize > CHUNK_MAX_BYTES) {
+      console.log(`[ChunkFlow] File too large for in-memory chunking ` +
+        `(${Utils.formatFileSize(fileSize)} > ${Utils.formatFileSize(CHUNK_MAX_BYTES)}) — using normal download`);
+      await removeActiveChunkFetch(url);
+      chrome.downloads.download({ url, filename }, (id) => {
+        if (id) storeDownloadMode(id, 'normal');
+      });
+      return;
+    }
 
-      const { fileSize, mimeType, finalUrl, filename } = result;
-      const chunkSize = Math.ceil(fileSize / numberOfChunks);
-      const chunkPromises = [];
+    const chunkSize = Math.ceil(fileSize / numberOfChunks);
+    const chunkPromises = [];
 
-      for (let i = 0; i < numberOfChunks; i++) {
-        const start = i * chunkSize;
-        const end = i === numberOfChunks - 1 ? fileSize - 1 : (start + chunkSize - 1);
+    for (let i = 0; i < numberOfChunks; i++) {
+      const start = i * chunkSize;
+      const end = i === numberOfChunks - 1 ? fileSize - 1 : (start + chunkSize - 1);
 
-        chunkPromises.push(
-          fetchWithRetry(
-            finalUrl,
-            { headers: { Range: `bytes=${start}-${end}` }, credentials: 'include' }
-          ).then(res => {
-            if (!res.ok) throw new Error(`Failed to fetch chunk ${i}: ${res.status}`);
-            return res.arrayBuffer();
-          })
-        );
-      }
+      chunkPromises.push(
+        fetchWithRetry(
+          finalUrl,
+          { headers: { Range: `bytes=${start}-${end}` }, credentials: 'include' }
+        ).then(res => {
+          if (!res.ok) throw new Error(`Failed to fetch chunk ${i}: ${res.status}`);
+          return res.arrayBuffer();
+        })
+      );
+    }
 
-      return Promise.all(chunkPromises)
-        .then(chunks => {
-          const totalBytes = chunks.reduce((acc, c) => acc + c.byteLength, 0);
-          const merged = new Uint8Array(totalBytes);
-          let offset = 0;
-          chunks.forEach(c => {
-            merged.set(new Uint8Array(c), offset);
-            offset += c.byteLength;
-          });
-
-          const blob      = new Blob([merged], { type: mimeType });
-          const objectURL = URL.createObjectURL(blob);
-
-          chrome.downloads.download({ url: objectURL, filename }, (id) => {
-            if (id) storeDownloadMode(id, 'chunked');
-          });
-
-          if (popupPort) {
-            popupPort.postMessage({ type: 'DOWNLOAD_READY', url: objectURL, filename, isChunked: true });
-          }
-
-          return blob;
-        });
-    })
-    .catch(error => {
-      console.error('[ChunkFlow] Download error:', error);
-      if (popupPort) {
-        popupPort.postMessage({ type: 'ERROR', message: `Download failed: ${error.message}` });
-      }
-
-      // Best-effort fallback to Chrome's native downloader.
-      console.log('[ChunkFlow] Falling back to normal download');
-      try {
-        const filename = new URL(url).pathname.split('/').pop() || 'downloaded_file';
-        chrome.downloads.download({ url, filename }, (id) => {
-          if (id) storeDownloadMode(id, 'fallback');
-        });
-      } catch {
-        chrome.downloads.download({ url }, (id) => {
-          if (id) storeDownloadMode(id, 'fallback');
-        });
-      }
+    const chunks = await Promise.all(chunkPromises);
+    const totalBytes = chunks.reduce((acc, c) => acc + c.byteLength, 0);
+    const merged = new Uint8Array(totalBytes);
+    let offset = 0;
+    chunks.forEach(c => {
+      merged.set(new Uint8Array(c), offset);
+      offset += c.byteLength;
     });
+
+    const blob      = new Blob([merged], { type: mimeType });
+    const objectURL = URL.createObjectURL(blob);
+
+    // Remove the placeholder BEFORE creating the Chrome item so the popup
+    // never shows both the placeholder and the real item simultaneously.
+    await removeActiveChunkFetch(url);
+
+    chrome.downloads.download({ url: objectURL, filename }, (id) => {
+      if (id) storeDownloadMode(id, 'chunked');
+    });
+
+    if (popupPort) {
+      popupPort.postMessage({ type: 'DOWNLOAD_READY', url: objectURL, filename, isChunked: true });
+    }
+
+  } catch (error) {
+    console.error('[ChunkFlow] Download error:', error);
+    if (popupPort) {
+      popupPort.postMessage({ type: 'ERROR', message: `Download failed: ${error.message}` });
+    }
+
+    // Best-effort fallback to Chrome's native downloader.
+    console.log('[ChunkFlow] Falling back to normal download');
+    await removeActiveChunkFetch(url);
+    try {
+      const filename = new URL(url).pathname.split('/').pop() || 'downloaded_file';
+      chrome.downloads.download({ url, filename }, (id) => {
+        if (id) storeDownloadMode(id, 'fallback');
+      });
+    } catch {
+      chrome.downloads.download({ url }, (id) => {
+        if (id) storeDownloadMode(id, 'fallback');
+      });
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
