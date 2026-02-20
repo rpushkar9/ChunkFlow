@@ -4,6 +4,7 @@
     "description": "Accelerate downloads & uploads with parallel chunking technology",
     "optional_permissions": [ "management" ],
     "permissions": ["downloads", "storage", "contextMenus"],
+    "host_permissions": ["<all_urls>"],
   
     "background": {
       "service_worker": "background.js"
