@@ -1,3 +1,5 @@
+importScripts('utils.js');
+
 let uploadedFiles = [];
 let popupPort = null;
 
@@ -9,6 +11,7 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 function downloadInChunks(url, numberOfChunks = 10) {
+  console.log(`[ChunkFlow] downloadInChunks: ${numberOfChunks} chunks for ${url}`);
   return fetch(url, { method: 'HEAD' })
     .then(response => {
       console.log('Checking for range header support');
@@ -208,13 +211,23 @@ function storeUploadedFileDetails(fileName, fileSize, fileType) {
   });
 }
 
+function getChunkCount(callback) {
+  chrome.storage.local.get({ chunkCount: 10 }, (data) => {
+    const count = Utils.clampChunkCount(data.chunkCount);
+    console.log(`[ChunkFlow] getChunkCount: resolved to ${count}`);
+    callback(count);
+  });
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   switch (message.type) {
     case "START_DOWNLOAD":
       console.log("Starting download for URL:", message.url);
-      downloadInChunks(message.url);
-      sendResponse({ success: true });
-      break;
+      getChunkCount((count) => {
+        downloadInChunks(message.url, count);
+        sendResponse({ success: true });
+      });
+      return true;
 
     case "DELETE_DOWNLOAD":
       chrome.downloads.removeFile(message.downloadId, () => {
@@ -260,16 +273,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       }
 
-      handleUpload(message.fileData, message.fileName, message.uploadUrl)
-        .then(response => {
-          console.log('Upload successful:', response);
-          storeUploadedFileDetails(message.fileName, message.fileSize, message.fileType);
-          sendResponse({ success: true, response });
-        })
-        .catch(error => {
-          console.error('Upload failed:', error);
-          sendResponse({ success: false, error: error.message });
-        });
+      getChunkCount((count) => {
+        handleUpload(message.fileData, message.fileName, message.uploadUrl, count)
+          .then(response => {
+            console.log('Upload successful:', response);
+            storeUploadedFileDetails(message.fileName, message.fileSize, message.fileType);
+            sendResponse({ success: true, response });
+          })
+          .catch(error => {
+            console.error('Upload failed:', error);
+            sendResponse({ success: false, error: error.message });
+          });
+      });
       return true;
 
     case 'GET_UPLOADED_FILES':
@@ -315,6 +330,8 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === "download-with-chunks" && info.linkUrl) {
     console.log("Context menu download:", info.linkUrl);
-    downloadInChunks(info.linkUrl);
+    getChunkCount((count) => {
+      downloadInChunks(info.linkUrl, count);
+    });
   }
 });

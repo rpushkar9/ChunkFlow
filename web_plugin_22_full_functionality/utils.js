@@ -44,6 +44,12 @@ const Utils = {
       clearTimeout(timeout);
       timeout = setTimeout(later, wait);
     };
+  },
+
+  // Clamp chunk count to valid range. Returns def if value is missing/NaN.
+  clampChunkCount: (val, min = 2, max = 32, def = 10) => {
+    const n = Number(val);
+    return isNaN(n) || n === 0 ? def : Math.min(max, Math.max(min, Math.round(n)));
   }
 };
 
