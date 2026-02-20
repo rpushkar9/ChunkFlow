@@ -2,7 +2,8 @@
 console.log("Content script loaded.");
 
 const handleDownloadClick = (event) => {
-  const downloadUrl = event.target.href;
+  // Use currentTarget (the <a> the handler is on), not target (which may be a child element).
+  const downloadUrl = event.currentTarget.href;
   
   if (!downloadUrl || !Utils.validateUrl(downloadUrl)) {
     console.warn("Invalid download URL:", downloadUrl);
@@ -49,6 +50,10 @@ const attachDownloadHandlers = () => {
 
 attachDownloadHandlers();
 
+// Debounce so rapid DOM mutations on heavy SPAs (e.g. Google Drive) don't
+// queue hundreds of back-to-back attachDownloadHandlers calls.
+const debouncedAttachHandlers = Utils.debounce(attachDownloadHandlers, 200);
+
 const observer = new MutationObserver((mutations) => {
   let shouldCheck = false;
   mutations.forEach((mutation) => {
@@ -62,9 +67,9 @@ const observer = new MutationObserver((mutations) => {
       });
     }
   });
-  
+
   if (shouldCheck) {
-    setTimeout(attachDownloadHandlers, 100);
+    debouncedAttachHandlers();
   }
 });
 
@@ -73,13 +78,3 @@ observer.observe(document.body, {
   subtree: true
 });
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'CONTEXT_MENU_DOWNLOAD') {
-    const downloadUrl = message.url;
-    if (Utils.validateUrl(downloadUrl)) {
-      chrome.runtime.sendMessage({ type: "START_DOWNLOAD", url: downloadUrl });
-    } else {
-      console.error("Invalid URL for context menu download:", downloadUrl);
-    }
-  }
-});
