@@ -322,7 +322,7 @@ chrome.downloads.onErased.addListener((downloadId) => {
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
     id: "download-with-chunks",
-    title: "Download with MyEasyDownloader",
+    title: "Download with ChunkFlow",
     contexts: ["link"]
   });
 });

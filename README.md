@@ -137,7 +137,7 @@ ChunkFlow is a powerful Chrome extension that **accelerates downloads and upload
 - **Error isolation** per chunk
 
 ## 🔧 Configuration
-- **Default chunks**: 10 parallel streams (configurable in code)
+- **Default chunks**: 10 parallel streams (configurable via the popup UI, 2–32, persisted in `chrome.storage.local`)
 - **Update frequency**: 500ms active, 2s idle
 - **File detection**: Automatic by extension
 - **Memory usage**: Optimized for large files
@@ -161,6 +161,6 @@ ChunkFlow is a powerful Chrome extension that **accelerates downloads and upload
 - **Smart chunk sizing**: Dynamic chunk count based on file size and connection speed
 - **Content-Disposition parsing**: Better filename detection from HTTP headers
 - **Upload progress UI**: Real-time chunk-level upload progress visualization
-- **Configuration panel**: User-configurable chunk settings
+- ~~**Configuration panel**: User-configurable chunk settings~~ ✅ Done in v2.3.0
 - **Download queue**: Batch download management with priority controls
 - **Bandwidth throttling**: Optional speed limiting for chunked transfers
