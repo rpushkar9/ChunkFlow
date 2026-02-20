@@ -50,6 +50,12 @@ body {
   margin-bottom: 4px;
 }
 
+.download-time {
+  font-size: 11px;
+  color: #aaa;
+  margin-bottom: 2px;
+}
+
 .download-size {
   font-size: 11px;
   color: #888;
