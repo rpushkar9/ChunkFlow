@@ -75,17 +75,19 @@ const updateDownloadsList = (downloads, modes = {}, activeFetches = []) => {
     timeDiv.textContent = formatDownloadTime(download.startTime);
     downloadDiv.appendChild(timeDiv);
 
-    // Download mode badge (chunked / normal / fallback) — only shown if mode is known
+    // Download mode badge — shown for every download once mode is known
     const mode = modes[String(download.id)];
     if (mode) {
       const modeBadge = document.createElement('div');
       modeBadge.className = 'download-mode-badge ' + (
         mode === 'chunked'  ? 'badge-chunked'  :
-        mode === 'fallback' ? 'badge-fallback' : 'badge-normal'
+        mode === 'fallback' ? 'badge-fallback' :
+        mode === 'browser'  ? 'badge-browser'  : 'badge-normal'
       );
       modeBadge.textContent =
         mode === 'chunked'  ? '⚡ Chunked'  :
-        mode === 'fallback' ? '⚠ Fallback' : '↓ Normal';
+        mode === 'fallback' ? '⚠ Fallback' :
+        mode === 'browser'  ? '↓ Browser'  : '↓ Normal';
       downloadDiv.appendChild(modeBadge);
     }
 
