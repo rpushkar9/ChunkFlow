@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Node / test tooling
+node_modules/
+coverage/
+.nyc_output/
+
+# Editor artifacts
+.idea/
+*.swp
+*.swo
