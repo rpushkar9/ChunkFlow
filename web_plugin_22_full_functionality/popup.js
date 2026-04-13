@@ -171,14 +171,32 @@ const updateDownloadsList = (downloads, modes = {}, activeFetches = []) => {
     const pendingDiv = document.createElement('div');
     pendingDiv.className = 'download-item';
 
-    pendingDiv.innerHTML = `
-      <div class="download-name">${displayName}</div>
-      <div class="download-status">Status: Fetching chunks&hellip;</div>
-      <div class="download-mode-badge badge-chunked">⚡ Chunked (preparing)</div>
-      <div class="progress-bar">
-        <div class="progress" style="width:100%;opacity:0.4;">assembling…</div>
-      </div>
-    `;
+    const nameDiv = document.createElement('div');
+    nameDiv.className = 'download-name';
+    nameDiv.textContent = displayName;
+    pendingDiv.appendChild(nameDiv);
+
+    const statusDiv = document.createElement('div');
+    statusDiv.className = 'download-status';
+    statusDiv.textContent = 'Status: Fetching chunks...';
+    pendingDiv.appendChild(statusDiv);
+
+    const badgeDiv = document.createElement('div');
+    badgeDiv.className = 'download-mode-badge badge-chunked';
+    badgeDiv.textContent = '⚡ Chunked (preparing)';
+    pendingDiv.appendChild(badgeDiv);
+
+    const progressBar = document.createElement('div');
+    progressBar.className = 'progress-bar';
+
+    const progress = document.createElement('div');
+    progress.className = 'progress';
+    progress.style.width = '100%';
+    progress.style.opacity = '0.4';
+    progress.textContent = 'assembling...';
+    progressBar.appendChild(progress);
+
+    pendingDiv.appendChild(progressBar);
     downloadsListDiv.appendChild(pendingDiv);
   });
 };
@@ -272,7 +290,7 @@ const handleFileUpload = async () => {
       }, response => {
         if (response && response.success) {
           showMessage('Upload successful!', 'success');
-          storeUploadedFile(selectedFile);
+          displayUploadedFiles();
           clearFileSelection();
         } else {
           showMessage(`Upload failed: ${response?.error || 'Unknown error'}`, 'error');
@@ -283,16 +301,6 @@ const handleFileUpload = async () => {
   } catch (error) {
     showMessage(`Upload failed: ${error.message}`, 'error');
   }
-};
-
-const storeUploadedFile = (file) => {
-  chrome.storage.local.get('uploadedFiles', (data) => {
-    const uploadedFiles = data.uploadedFiles || [];
-    uploadedFiles.push({ name: file.name, size: file.size, type: file.type, timestamp: Date.now() });
-    chrome.storage.local.set({ uploadedFiles }, () => {
-      displayUploadedFiles();
-    });
-  });
 };
 
 const clearFileSelection = () => {
@@ -340,12 +348,23 @@ const displayUploadedFiles = () => {
     uploadedFiles.forEach(file => {
       const listItem = document.createElement('div');
       listItem.className = 'uploaded-file-item';
-      listItem.innerHTML = `
-        <strong>${file.name}</strong><br>
-        Size: ${formatFileSize(file.size)}<br>
-        Type: ${file.type}<br>
-        Uploaded: ${new Date(file.timestamp).toLocaleString()}
-      `;
+
+      const name = document.createElement('strong');
+      name.textContent = file.name;
+
+      const size = document.createElement('div');
+      size.textContent = `Size: ${formatFileSize(file.size)}`;
+
+      const type = document.createElement('div');
+      type.textContent = `Type: ${file.type}`;
+
+      const uploaded = document.createElement('div');
+      uploaded.textContent = `Uploaded: ${new Date(file.timestamp).toLocaleString()}`;
+
+      listItem.appendChild(name);
+      listItem.appendChild(size);
+      listItem.appendChild(type);
+      listItem.appendChild(uploaded);
       uploadedFilesList.appendChild(listItem);
     });
   });

@@ -6,13 +6,31 @@ const CHUNK_MAX_BYTES = 500 * 1024 * 1024; // 500 MB
 
 let popupPort = null;
 
-// Before calling chrome.downloads.download() we register the URL and intended
-// mode here.  chrome.downloads.onCreated reads this to assign the badge
-// immediately when the download item is created — more reliable than waiting
-// for the chrome.downloads.download() callback, which can fire after onCreated
-// (causing the popup to render without a badge on the first refresh).
-const pendingChunkFlowUrls = new Set(); // URLs we're about to create
-const pendingModeByUrl     = {};        // url → 'chunked' | 'normal' | 'fallback'
+function createStorageQueue(defaults) {
+  let chain = Promise.resolve();
+
+  return (worker) => new Promise(resolve => {
+    chain = chain
+      .then(() => new Promise(done => {
+        chrome.storage.local.get(defaults, (data) => {
+          const result = worker(data) || {};
+          const updates = result.updates || {};
+          chrome.storage.local.set(updates, () => {
+            resolve(result.value);
+            done();
+          });
+        });
+      }))
+      .catch((error) => {
+        console.error('[ChunkFlow] storage queue error:', error);
+        resolve(undefined);
+      });
+  });
+}
+
+const withActiveFetchStorage = createStorageQueue({ activeChunkFetches: [] });
+const withPendingModeStorage = createStorageQueue({ pendingModeByUrl: {} });
+const withDownloadModesStorage = createStorageQueue({ downloadModes: {}, downloadModesOrder: [] });
 
 chrome.runtime.onConnect.addListener((port) => {
   popupPort = port;
@@ -75,14 +93,29 @@ function getFilename(response, fallbackUrl) {
  * fetchDownloads reads it (fixes the race that caused missing mode badges).
  */
 function storeDownloadMode(downloadId, mode) {
-  chrome.storage.local.get({ downloadModes: {} }, (data) => {
-    const modes = data.downloadModes;
-    modes[String(downloadId)] = mode;
-    const keys = Object.keys(modes);
-    if (keys.length > 100) delete modes[keys[0]];
-    chrome.storage.local.set({ downloadModes: modes }, () => {
-      if (popupPort) popupPort.postMessage({ type: 'DOWNLOAD_UPDATE' });
-    });
+  const id = String(downloadId);
+  withDownloadModesStorage((data) => {
+    const modes = { ...(data.downloadModes || {}) };
+    const order = Array.isArray(data.downloadModesOrder) ? [...data.downloadModesOrder] : [];
+
+    modes[id] = mode;
+    const existingIndex = order.indexOf(id);
+    if (existingIndex !== -1) order.splice(existingIndex, 1);
+    order.push(id);
+
+    while (order.length > 100) {
+      const evicted = order.shift();
+      delete modes[evicted];
+    }
+
+    return {
+      updates: {
+        downloadModes: modes,
+        downloadModesOrder: order
+      }
+    };
+  }).then(() => {
+    if (popupPort) popupPort.postMessage({ type: 'DOWNLOAD_UPDATE' });
   });
 }
 
@@ -92,26 +125,43 @@ function storeDownloadMode(downloadId, mode) {
  * creates a download item).
  */
 function addActiveChunkFetch(url) {
-  return new Promise(resolve => {
-    chrome.storage.local.get({ activeChunkFetches: [] }, (data) => {
-      // Deduplicate in case of rapid re-clicks
-      const list = data.activeChunkFetches.filter(e => e.url !== url);
-      list.push({ url, startTime: Date.now() });
-      chrome.storage.local.set({ activeChunkFetches: list }, () => {
-        if (popupPort) popupPort.postMessage({ type: 'DOWNLOAD_UPDATE' });
-        resolve();
-      });
-    });
+  return withActiveFetchStorage((data) => {
+    const list = data.activeChunkFetches.filter(e => e.url !== url);
+    list.push({ url, startTime: Date.now() });
+    return { updates: { activeChunkFetches: list } };
+  }).then(() => {
+    if (popupPort) popupPort.postMessage({ type: 'DOWNLOAD_UPDATE' });
   });
 }
 
 /** Remove a URL from activeChunkFetches once its Chrome download item exists. */
 function removeActiveChunkFetch(url) {
-  return new Promise(resolve => {
-    chrome.storage.local.get({ activeChunkFetches: [] }, (data) => {
-      const list = data.activeChunkFetches.filter(e => e.url !== url);
-      chrome.storage.local.set({ activeChunkFetches: list }, resolve);
-    });
+  return withActiveFetchStorage((data) => {
+    const list = data.activeChunkFetches.filter(e => e.url !== url);
+    return { updates: { activeChunkFetches: list } };
+  });
+}
+
+/**
+ * Persist pending mode assignments keyed by URL so mode assignment survives
+ * service-worker suspension between chrome.downloads.download() and onCreated.
+ * Value shape in storage:
+ *   pendingModeByUrl: { [url]: ['chunked' | 'normal' | 'fallback', ...] }
+ */
+function enqueuePendingMode(url, mode) {
+  return withPendingModeStorage((data) => {
+    const next = Utils.enqueueModeForUrl(data.pendingModeByUrl, url, mode);
+    return { updates: { pendingModeByUrl: next } };
+  });
+}
+
+function consumePendingMode(url) {
+  return withPendingModeStorage((data) => {
+    const consumed = Utils.consumeModeForUrl(data.pendingModeByUrl, url);
+    return {
+      updates: { pendingModeByUrl: consumed.pendingModeByUrl },
+      value: consumed.mode
+    };
   });
 }
 
@@ -138,8 +188,7 @@ async function downloadInChunks(url, numberOfChunks = 10) {
     if (headResponse.headers.get('Accept-Ranges') !== 'bytes') {
       console.log('[ChunkFlow] No range support — using normal download');
       await removeActiveChunkFetch(url);
-      pendingModeByUrl[url] = 'normal';
-      pendingChunkFlowUrls.add(url);
+      await enqueuePendingMode(url, 'normal');
       chrome.downloads.download({ url, filename });
       return;
     }
@@ -156,8 +205,7 @@ async function downloadInChunks(url, numberOfChunks = 10) {
       console.log(`[ChunkFlow] File too large for in-memory chunking ` +
         `(${Utils.formatFileSize(fileSize)} > ${Utils.formatFileSize(CHUNK_MAX_BYTES)}) — using normal download`);
       await removeActiveChunkFetch(url);
-      pendingModeByUrl[url] = 'normal';
-      pendingChunkFlowUrls.add(url);
+      await enqueuePendingMode(url, 'normal');
       chrome.downloads.download({ url, filename });
       return;
     }
@@ -196,8 +244,7 @@ async function downloadInChunks(url, numberOfChunks = 10) {
     // never shows both the placeholder and the real item simultaneously.
     await removeActiveChunkFetch(url);
 
-    pendingModeByUrl[objectURL] = 'chunked';
-    pendingChunkFlowUrls.add(objectURL);
+    await enqueuePendingMode(objectURL, 'chunked');
     chrome.downloads.download({ url: objectURL, filename });
 
     if (popupPort) {
@@ -213,8 +260,7 @@ async function downloadInChunks(url, numberOfChunks = 10) {
     // Best-effort fallback to Chrome's native downloader.
     console.log('[ChunkFlow] Falling back to normal download');
     await removeActiveChunkFetch(url);
-    pendingModeByUrl[url] = 'fallback';
-    pendingChunkFlowUrls.add(url);
+    await enqueuePendingMode(url, 'fallback');
     try {
       const filename = new URL(url).pathname.split('/').pop() || 'downloaded_file';
       chrome.downloads.download({ url, filename });
@@ -425,21 +471,17 @@ chrome.downloads.onChanged.addListener((downloadDelta) => {
   if (popupPort) popupPort.postMessage({ type: 'DOWNLOAD_UPDATE' });
 });
 
-chrome.downloads.onCreated.addListener((downloadItem) => {
+chrome.downloads.onCreated.addListener(async (downloadItem) => {
   console.log('Download created:', downloadItem.id);
   const dlUrl = downloadItem.url;
 
-  if (pendingChunkFlowUrls.has(dlUrl)) {
-    // Download we initiated — assign the pre-registered mode.
-    // Doing this here (onCreated) rather than in the chrome.downloads.download()
-    // callback guarantees the mode is in storage before the popup's next render.
-    pendingChunkFlowUrls.delete(dlUrl);
-    const mode = pendingModeByUrl[dlUrl];
-    if (mode) {
-      delete pendingModeByUrl[dlUrl];
-      storeDownloadMode(downloadItem.id, mode);
-      return; // storeDownloadMode sends DOWNLOAD_UPDATE after the write
-    }
+  const mode = await consumePendingMode(dlUrl);
+  if (mode) {
+    // Download initiated by ChunkFlow.
+    // Doing this in onCreated guarantees the mode is in storage before the
+    // popup's next render.
+    storeDownloadMode(downloadItem.id, mode);
+    return; // storeDownloadMode sends DOWNLOAD_UPDATE after the write
   }
 
   // Download NOT initiated by ChunkFlow (e.g. Google Drive button, other

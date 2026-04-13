@@ -129,3 +129,54 @@ describe('Utils.clampChunkCount', () => {
     expect(Utils.clampChunkCount(undefined, 1, 20, 5)).toBe(5);
   });
 });
+
+// ── pending mode queue helpers ────────────────────────────────────────────────
+describe('Utils.enqueueModeForUrl / Utils.consumeModeForUrl', () => {
+  test('enqueue initializes queue for a URL', () => {
+    const map = Utils.enqueueModeForUrl({}, 'https://example.com/file.zip', 'normal');
+    expect(map).toEqual({ 'https://example.com/file.zip': ['normal'] });
+  });
+
+  test('enqueue appends in FIFO order', () => {
+    const first = Utils.enqueueModeForUrl({}, 'https://example.com/file.zip', 'normal');
+    const second = Utils.enqueueModeForUrl(first, 'https://example.com/file.zip', 'fallback');
+    expect(second['https://example.com/file.zip']).toEqual(['normal', 'fallback']);
+  });
+
+  test('consume returns first mode and keeps remainder', () => {
+    const seeded = {
+      'https://example.com/file.zip': ['normal', 'fallback']
+    };
+    const consumed = Utils.consumeModeForUrl(seeded, 'https://example.com/file.zip');
+    expect(consumed.mode).toBe('normal');
+    expect(consumed.pendingModeByUrl).toEqual({
+      'https://example.com/file.zip': ['fallback']
+    });
+  });
+
+  test('consume deletes key when queue becomes empty', () => {
+    const seeded = {
+      'https://example.com/file.zip': ['chunked']
+    };
+    const consumed = Utils.consumeModeForUrl(seeded, 'https://example.com/file.zip');
+    expect(consumed.mode).toBe('chunked');
+    expect(consumed.pendingModeByUrl).toEqual({});
+  });
+
+  test('consume missing URL returns undefined mode and unchanged map', () => {
+    const seeded = { 'https://example.com/other.zip': ['normal'] };
+    const consumed = Utils.consumeModeForUrl(seeded, 'https://example.com/file.zip');
+    expect(consumed.mode).toBeUndefined();
+    expect(consumed.pendingModeByUrl).toEqual(seeded);
+  });
+
+  test('helper operations do not mutate input object', () => {
+    const original = { 'https://example.com/file.zip': ['normal'] };
+    const enqueued = Utils.enqueueModeForUrl(original, 'https://example.com/file.zip', 'fallback');
+    const consumed = Utils.consumeModeForUrl(original, 'https://example.com/file.zip');
+
+    expect(original).toEqual({ 'https://example.com/file.zip': ['normal'] });
+    expect(enqueued).toEqual({ 'https://example.com/file.zip': ['normal', 'fallback'] });
+    expect(consumed.pendingModeByUrl).toEqual({});
+  });
+});

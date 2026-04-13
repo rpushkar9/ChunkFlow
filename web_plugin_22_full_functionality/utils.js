@@ -50,6 +50,28 @@ const Utils = {
   clampChunkCount: (val, min = 2, max = 32, def = 10) => {
     const n = Number(val);
     return isNaN(n) || n === 0 ? def : Math.min(max, Math.max(min, Math.round(n)));
+  },
+
+  enqueueModeForUrl: (pendingModeByUrl, url, mode) => {
+    const next = { ...(pendingModeByUrl || {}) };
+    const queue = Array.isArray(next[url]) ? [...next[url]] : [];
+    queue.push(mode);
+    next[url] = queue;
+    return next;
+  },
+
+  consumeModeForUrl: (pendingModeByUrl, url) => {
+    const next = { ...(pendingModeByUrl || {}) };
+    const queue = Array.isArray(next[url]) ? [...next[url]] : [];
+    const mode = queue.shift();
+
+    if (queue.length > 0) {
+      next[url] = queue;
+    } else {
+      delete next[url];
+    }
+
+    return { mode, pendingModeByUrl: next };
   }
 };
 
