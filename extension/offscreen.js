@@ -14,16 +14,6 @@ async function fetchWithRetry(url, options, maxRetries = 1) {
   }
 }
 
-function parseContentRange(value) {
-  const match = /^bytes\s+(\d+)-(\d+)\/(\d+|\*)$/i.exec(value || '');
-  if (!match) return null;
-  return {
-    start: Number(match[1]),
-    end: Number(match[2]),
-    total: match[3] === '*' ? null : Number(match[3])
-  };
-}
-
 async function buildObjectUrl(url, numberOfChunks, fileSize, mimeType, requestId) {
   const controller = new AbortController();
   if (requestId) {
@@ -74,7 +64,7 @@ async function buildObjectUrl(url, numberOfChunks, fileSize, mimeType, requestId
             throw new Error(`Invalid range response for chunk ${i}: expected 206, got ${res.status}`);
           }
 
-          const contentRange = parseContentRange(res.headers.get('Content-Range'));
+          const contentRange = Utils.parseContentRange(res.headers.get('Content-Range'));
           if (!contentRange) {
             throw new Error(`Missing/invalid Content-Range for chunk ${i}`);
           }

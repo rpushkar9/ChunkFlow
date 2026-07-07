@@ -1,5 +1,11 @@
 
-console.log("Content script loaded.");
+// Flip to true to see ChunkFlow content-script diagnostics in the page console.
+const DEBUG = false;
+function debugLog(...args) {
+  if (DEBUG) console.log(...args);
+}
+
+debugLog("Content script loaded.");
 
 const handleDownloadClick = (event) => {
   // Use currentTarget (the <a> the handler is on), not target (which may be a child element).
@@ -10,11 +16,11 @@ const handleDownloadClick = (event) => {
     return;
   }
   
-  console.log("Download link clicked:", downloadUrl);
+  debugLog("Download link clicked:", downloadUrl);
   
   event.preventDefault();
   chrome.runtime.sendMessage({ type: "START_DOWNLOAD", url: downloadUrl }, (response) => {
-    console.log("Download initiated via extension");
+    debugLog("Download initiated via extension");
   });
 };
 
@@ -41,7 +47,7 @@ const attachDownloadHandlers = () => {
   const allLinks = document.querySelectorAll('a:not([data-handler-attached])');
   const downloadLinks = Array.from(allLinks).filter(isDownloadLink);
   
-  console.log("Found new download links:", downloadLinks.length);
+  debugLog("Found new download links:", downloadLinks.length);
   
   downloadLinks.forEach(link => {
     link.addEventListener('click', handleDownloadClick);
