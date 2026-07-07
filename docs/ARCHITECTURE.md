@@ -1,7 +1,7 @@
 # ChunkFlow — Architecture
 
 How the extension is wired, end to end. Pairs with the feature-level [README](../README.md).
-Everything lives in `web_plugin_22_full_functionality/` (the folder you load unpacked).
+Everything lives in `extension/` (the folder you load unpacked).
 
 ---
 

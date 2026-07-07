@@ -1,6 +1,6 @@
 'use strict';
 
-const Utils = require('../web_plugin_22_full_functionality/utils.js');
+const Utils = require('../extension/utils.js');
 
 // ── formatFileSize ────────────────────────────────────────────────────────────
 describe('Utils.formatFileSize', () => {

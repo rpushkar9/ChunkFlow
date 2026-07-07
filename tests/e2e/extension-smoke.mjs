@@ -3,7 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { chromium } from 'playwright';
 
-const EXTENSION_PATH = path.resolve(process.cwd(), 'web_plugin_22_full_functionality');
+const EXTENSION_PATH = path.resolve(process.cwd(), 'extension');
 const TEST_URL_CHUNKED = process.env.CHUNKFLOW_TEST_URL_CHUNKED || 'http://ipv4.download.thinkbroadband.com/20MB.zip';
 const TEST_URL_LARGE = process.env.CHUNKFLOW_TEST_URL_LARGE || 'http://ipv4.download.thinkbroadband.com/1GB.zip';
 const LAUNCH_CHANNEL = process.env.CHUNKFLOW_PLAYWRIGHT_CHANNEL || 'chromium';

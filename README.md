@@ -108,7 +108,7 @@ ChunkFlow is a powerful Chrome extension that **accelerates downloads and upload
 1. Download the extension files
 2. Open `chrome://extensions/`
 3. Enable "Developer mode"
-4. Click "Load unpacked" and select the extension folder
+4. Click "Load unpacked" and select the `extension/` folder
 5. The ChunkFlow icon will appear in your browser toolbar
 
 ### Using Downloads
