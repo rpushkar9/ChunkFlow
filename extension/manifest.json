@@ -2,7 +2,6 @@
     "name": "ChunkFlow",
     "version": "2.3.0",
     "description": "Accelerate downloads & uploads with parallel chunking technology",
-    "optional_permissions": [ "management" ],
     "permissions": ["downloads", "storage", "contextMenus", "offscreen"],
     "host_permissions": ["http://*/*", "https://*/*"],
   

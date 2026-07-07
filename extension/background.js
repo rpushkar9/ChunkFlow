@@ -422,9 +422,13 @@ async function downloadInChunks(url, numberOfChunks = 10) {
       return;
     }
 
-    const attemptChunkCounts = [numberOfChunks]
-      .concat(numberOfChunks > 6 ? [6] : [])
-      .concat(numberOfChunks > 4 ? [4] : [])
+    // Cap the chunk count by file size so every chunk is at least 1 byte. A user
+    // can request up to 32 chunks, which would otherwise produce invalid ranges
+    // (e.g. bytes=5-4) and force an avoidable fallback on tiny files.
+    const effectiveChunkCount = Math.max(1, Math.min(numberOfChunks, fileSize));
+    const attemptChunkCounts = [effectiveChunkCount]
+      .concat(effectiveChunkCount > 6 ? [6] : [])
+      .concat(effectiveChunkCount > 4 ? [4] : [])
       .filter((count, index, arr) => arr.indexOf(count) === index);
 
     let objectURL;

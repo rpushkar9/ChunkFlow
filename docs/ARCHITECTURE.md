@@ -73,11 +73,18 @@ stashed in storage so the popup's next render always has it.
 
 ### Why a queue instead of a variable?
 The service worker can unload between `downloads.download()` and the `onCreated` event.
-An in-memory variable would be lost. Instead the intended mode is **enqueued in
-`chrome.storage.local` keyed by URL** (`pendingModeByUrl`), then `onCreated` dequeues it and
-writes the final `downloadModes[id]`. Helpers `enqueueModeForUrl` / `consumeModeForUrl` live in
-`utils.js` and are unit-tested. If `onCreated` finds no pending mode, the download originated
-outside ChunkFlow → tagged `browser`.
+An in-memory variable would be lost. Instead, just before starting a download the intended
+mode is **enqueued in `chrome.storage.local` as a flat FIFO list** (`pendingModeQueue`, via
+`enqueuePendingMode`). When Chrome fires `onCreated`, `consumePendingMode` shifts the oldest
+entry (dropping entries older than 5 min) and writes the final `downloadModes[id]`. If the
+queue is empty, the download originated outside ChunkFlow → tagged `browser`.
+
+> ⚠️ **Known limitation:** `consumePendingMode` matches purely by FIFO order — it does **not**
+> match on `downloadItem.url`. This was a deliberate move away from an earlier URL-keyed
+> approach, but it means a reordered `onCreated` or an unrelated concurrent browser download
+> can consume the wrong entry and mislabel a badge. The URL-keyed helpers
+> `enqueueModeForUrl` / `consumeModeForUrl` still exist in `utils.js` (and are unit-tested) but
+> are **not wired into the live path** — they're legacy. See the P1 note in the review backlog.
 
 ---
 
@@ -86,7 +93,7 @@ outside ChunkFlow → tagged `browser`.
 | Key | Written by | Shape | Purpose |
 |-----|-----------|-------|---------|
 | `chunkCount` | popup | `number` (2–32) | User's parallel-chunk setting |
-| `pendingModeByUrl` | background | `{ [url]: mode[] }` | In-flight mode queue (survives SW suspension) |
+| `pendingModeQueue` | background | `[{ mode, at, sourceUrl, source, reason }]` | FIFO in-flight mode queue (survives SW suspension) |
 | `downloadModes` | background | `{ [downloadId]: mode }` | Final badge per download |
 | `downloadModeMeta` | background | `{ [downloadId]: {source, reason, sourceUrl} }` | Badge tooltip/explanation |
 | `activeChunkFetches` | background | `[{url, requestId, stage, ...}]` | "Preparing" placeholders shown before Chrome creates the item |
