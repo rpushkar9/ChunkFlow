@@ -40,6 +40,27 @@ describe('Utils.validateUrl', () => {
   });
 });
 
+// ── isHttpOrHttpsUrl ─────────────────────────────────────────────────────────
+describe('Utils.isHttpOrHttpsUrl', () => {
+  test('accepts https URL', () => {
+    expect(Utils.isHttpOrHttpsUrl('https://example.com/file.zip')).toBe(true);
+  });
+
+  test('accepts http URL', () => {
+    expect(Utils.isHttpOrHttpsUrl('http://example.com')).toBe(true);
+  });
+
+  test('rejects non-http scheme', () => {
+    expect(Utils.isHttpOrHttpsUrl('ftp://example.com/file.zip')).toBe(false);
+    expect(Utils.isHttpOrHttpsUrl('javascript:alert(1)')).toBe(false);
+    expect(Utils.isHttpOrHttpsUrl('blob:https://example.com/abc')).toBe(false);
+  });
+
+  test('rejects invalid URL', () => {
+    expect(Utils.isHttpOrHttpsUrl('not-a-url')).toBe(false);
+  });
+});
+
 // ── sanitizeFilename ──────────────────────────────────────────────────────────
 describe('Utils.sanitizeFilename', () => {
   test('replaces forbidden chars with underscores', () => {
