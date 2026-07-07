@@ -5,8 +5,13 @@ importScripts('utils.js');
 const CHUNK_MAX_BYTES = 500 * 1024 * 1024; // 500 MB
 const DEFAULT_CHUNK_COUNT = 10; // used when the user hasn't set a chunk count yet
 const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
-const OFFSCREEN_BUILD_TIMEOUT_MIN_MS = 3 * 60 * 1000;
-const OFFSCREEN_BUILD_TIMEOUT_MAX_MS = 15 * 60 * 1000;
+
+// Flip to true to surface the verbose [ChunkFlow] diagnostics in the
+// service-worker console. Warnings/errors are always logged regardless.
+const DEBUG = false;
+function debugLog(...args) {
+  if (DEBUG) console.log(...args);
+}
 
 let popupPort = null;
 
@@ -104,17 +109,6 @@ async function ensureOffscreenDocument() {
   });
 }
 
-function computeOffscreenTimeoutMs(fileSize, chunkCount = 10, attemptIndex = 0) {
-  // Size-aware timeout using conservative minimum throughput assumption (~0.5 MB/s)
-  // plus fixed overhead for offscreen setup + blob assembly.
-  const minThroughputBytesPerSec = 512 * 1024;
-  const transferMs = Math.ceil((fileSize / minThroughputBytesPerSec) * 1000);
-  const chunkOverheadMs = Math.max(0, (chunkCount - 4) * 8 * 1000);
-  const retryBonusMs = Math.max(0, attemptIndex) * 60 * 1000;
-  const estimated = transferMs + 60 * 1000 + chunkOverheadMs + retryBonusMs;
-  return Math.min(OFFSCREEN_BUILD_TIMEOUT_MAX_MS, Math.max(OFFSCREEN_BUILD_TIMEOUT_MIN_MS, estimated));
-}
-
 async function buildObjectUrlInOffscreen(url, numberOfChunks, fileSize, mimeType, requestId, timeoutMs) {
   await ensureOffscreenDocument();
 
@@ -181,12 +175,6 @@ function getFilename(response, fallbackUrl) {
   } catch {
     return 'downloaded_file';
   }
-}
-
-function headAdvertisesByteRanges(response) {
-  const raw = (response.headers.get('Accept-Ranges') || '').toLowerCase().trim();
-  if (!raw || raw === 'none') return false;
-  return raw.split(',').map((token) => token.trim()).includes('bytes') || raw.includes('bytes');
 }
 
 async function probeByteRangeSupport(url) {
@@ -328,7 +316,7 @@ function enqueuePendingMode(url, mode, details = {}) {
       reason: details.reason || ''
     });
     while (queue.length > 200) queue.shift();
-    console.log(`[ChunkFlow] enqueuePendingMode: mode=${mode} queueSize=${queue.length} url=${url}`);
+    debugLog(`[ChunkFlow] enqueuePendingMode: mode=${mode} queueSize=${queue.length} url=${url}`);
     return {
       updates: { pendingModeQueue: queue }
     };
@@ -352,7 +340,7 @@ function consumePendingMode(downloadItem) {
       };
     }
 
-    console.log(
+    debugLog(
       `[ChunkFlow] consumePendingMode: resolvedMode=${pending?.mode || 'none'} queueRemaining=${queue.length} ` +
       `createdUrl=${downloadItem.url} sourceUrl=${pending?.sourceUrl || 'n/a'}`
     );
@@ -369,7 +357,7 @@ function consumePendingMode(downloadItem) {
 // ---------------------------------------------------------------------------
 
 async function downloadInChunks(url, numberOfChunks = 10) {
-  console.log(`[ChunkFlow] downloadInChunks: ${numberOfChunks} chunks for ${url}`);
+  debugLog(`[ChunkFlow] downloadInChunks: ${numberOfChunks} chunks for ${url}`);
   const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
   // Show a "preparing" placeholder in the popup immediately, before Chrome
@@ -378,7 +366,7 @@ async function downloadInChunks(url, numberOfChunks = 10) {
 
   try {
     const headResponse = await fetchWithRetry(url, { method: 'HEAD', credentials: 'include' });
-    console.log('[ChunkFlow] HEAD response received');
+    debugLog('[ChunkFlow] HEAD response received');
     await updateActiveChunkFetch(requestId, {
       stage: 'head-ok',
       statusText: 'Server check passed. Preparing chunk requests...'
@@ -389,7 +377,7 @@ async function downloadInChunks(url, numberOfChunks = 10) {
     const finalUrl = headResponse.url || url;
     const filename  = getFilename(headResponse, url);
 
-    let hasRangeSupport = headAdvertisesByteRanges(headResponse);
+    let hasRangeSupport = Utils.headAdvertisesByteRanges(headResponse);
     let rangeReason = hasRangeSupport
       ? 'HEAD advertised byte range support.'
       : 'HEAD did not clearly advertise byte ranges.';
@@ -402,11 +390,11 @@ async function downloadInChunks(url, numberOfChunks = 10) {
       const probe = await probeByteRangeSupport(finalUrl);
       hasRangeSupport = probe.supported;
       rangeReason = probe.reason;
-      console.log(`[ChunkFlow] Range probe result: ${probe.reason}`);
+      debugLog(`[ChunkFlow] Range probe result: ${probe.reason}`);
     }
 
     if (!hasRangeSupport) {
-      console.log('[ChunkFlow] No range support — using normal download');
+      debugLog('[ChunkFlow] No range support — using normal download');
       await removeActiveChunkFetch(requestId);
       await enqueuePendingMode(url, 'normal', {
         reason: `ChunkFlow used native path because range support was unavailable. ${rangeReason}`
@@ -424,7 +412,7 @@ async function downloadInChunks(url, numberOfChunks = 10) {
 
     // Skip in-memory chunking for large files to avoid OOM in the service worker.
     if (fileSize > CHUNK_MAX_BYTES) {
-      console.log(`[ChunkFlow] File too large for in-memory chunking ` +
+      debugLog(`[ChunkFlow] File too large for in-memory chunking ` +
         `(${Utils.formatFileSize(fileSize)} > ${Utils.formatFileSize(CHUNK_MAX_BYTES)}) — using normal download`);
       await removeActiveChunkFetch(requestId);
       await enqueuePendingMode(url, 'normal', {
@@ -444,7 +432,7 @@ async function downloadInChunks(url, numberOfChunks = 10) {
 
     for (let attemptIndex = 0; attemptIndex < attemptChunkCounts.length; attemptIndex++) {
       const attemptChunkCount = attemptChunkCounts[attemptIndex];
-      const timeoutMs = computeOffscreenTimeoutMs(fileSize, attemptChunkCount, attemptIndex);
+      const timeoutMs = Utils.computeOffscreenTimeoutMs(fileSize, attemptChunkCount, attemptIndex);
 
       await updateActiveChunkFetch(requestId, {
         stage: attemptIndex === 0 ? 'chunking' : 'retrying',
@@ -512,7 +500,7 @@ async function downloadInChunks(url, numberOfChunks = 10) {
     }
 
     // Best-effort fallback to Chrome's native downloader.
-    console.log('[ChunkFlow] Falling back to normal download');
+    debugLog('[ChunkFlow] Falling back to normal download');
     await removeActiveChunkFetch(requestId);
     await enqueuePendingMode(url, 'fallback', {
       reason: `Chunking failed and native Chrome download was used (${error.message}).`
@@ -594,7 +582,7 @@ function uploadChunk(chunkData, uploadUrl, start, end, totalSize) {
     };
     xhr.upload.onprogress = function (event) {
       if (event.lengthComputable) {
-        console.log(`Chunk ${start}-${end} progress: ${Math.round((event.loaded / event.total) * 100)}%`);
+        debugLog(`Chunk ${start}-${end} progress: ${Math.round((event.loaded / event.total) * 100)}%`);
       }
     };
 
@@ -605,10 +593,10 @@ function uploadChunk(chunkData, uploadUrl, start, end, totalSize) {
 function handleUpload(fileData, fileName, uploadUrl, numberOfChunks = 10) {
   return checkServerSupport(uploadUrl).then(isSupported => {
     if (isSupported) {
-      console.log('Using chunked upload');
+      debugLog('Using chunked upload');
       return uploadInChunks(fileData, fileName, uploadUrl, numberOfChunks);
     } else {
-      console.log('Using normal upload');
+      debugLog('Using normal upload');
       return uploadFileNormally(fileData, fileName, uploadUrl);
     }
   });
@@ -619,7 +607,7 @@ function storeUploadedFileDetails(fileName, fileSize, fileType) {
     const uploadedFiles = data.uploadedFiles || [];
     uploadedFiles.push({ name: fileName, size: fileSize, type: fileType, timestamp: Date.now() });
     chrome.storage.local.set({ uploadedFiles }, () => {
-      console.log('Uploaded file details stored successfully.');
+      debugLog('Uploaded file details stored successfully.');
     });
   });
 }
@@ -631,7 +619,7 @@ function storeUploadedFileDetails(fileName, fileSize, fileType) {
 function getChunkCount(callback) {
   chrome.storage.local.get({ chunkCount: DEFAULT_CHUNK_COUNT }, (data) => {
     const count = Utils.clampChunkCount(data.chunkCount, 2, 32, DEFAULT_CHUNK_COUNT);
-    console.log(`[ChunkFlow] getChunkCount: using ${count} (saved: ${data.chunkCount})`);
+    debugLog(`[ChunkFlow] getChunkCount: using ${count} (saved: ${data.chunkCount})`);
     callback(count);
   });
 }
@@ -657,7 +645,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ success: false, error: 'Invalid download URL' });
         return false;
       }
-      console.log('Starting download for URL:', message.url);
+      debugLog('Starting download for URL:', message.url);
       getChunkCount((count) => {
         downloadInChunks(message.url, count);
         sendResponse({ success: true });
@@ -674,7 +662,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               console.warn(`Erase warning for ${message.downloadId}: ${chrome.runtime.lastError.message}`);
               return;
             }
-            console.log(`Deleted download with ID ${message.downloadId}`);
+            debugLog(`Deleted download with ID ${message.downloadId}`);
           });
         };
 
@@ -697,13 +685,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case 'PAUSE_DOWNLOAD':
       chrome.downloads.pause(message.downloadId, () => {
-        console.log(`Paused download with ID ${message.downloadId}`);
+        debugLog(`Paused download with ID ${message.downloadId}`);
       });
       break;
 
     case 'RESUME_DOWNLOAD':
       chrome.downloads.resume(message.downloadId, () => {
-        console.log(`Resumed download with ID ${message.downloadId}`);
+        debugLog(`Resumed download with ID ${message.downloadId}`);
       });
       break;
 
@@ -711,19 +699,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       chrome.downloads.search({ id: message.downloadId }, ([download]) => {
         if (download) {
           const originalUrl = download.finalUrl || download.url;
-          console.log('Retrieving URL for restart. Download ID:', message.downloadId, 'URL:', originalUrl);
+          debugLog('Retrieving URL for restart. Download ID:', message.downloadId, 'URL:', originalUrl);
           if (originalUrl) {
             chrome.downloads.cancel(message.downloadId, () => {
               enqueuePendingMode(originalUrl, 'normal', {
                 reason: 'Manual restart uses native Chrome download path.'
               }).then(() => {
                 chrome.downloads.download({ url: originalUrl }, (newDownloadId) => {
-                  console.log('Restarted download with ID:', newDownloadId, 'URL:', originalUrl);
+                  debugLog('Restarted download with ID:', newDownloadId, 'URL:', originalUrl);
                 });
               });
             });
           } else {
-            console.log('Could not restart download with ID', message.downloadId, ': URL not found.');
+            debugLog('Could not restart download with ID', message.downloadId, ': URL not found.');
           }
         }
       });
@@ -741,7 +729,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       getChunkCount((count) => {
         handleUpload(message.fileData, message.fileName, message.uploadUrl, count)
           .then(response => {
-            console.log('Upload successful:', response);
+            debugLog('Upload successful:', response);
             storeUploadedFileDetails(message.fileName, message.fileSize, message.fileType);
             sendResponse({ success: true, response });
           })
@@ -754,7 +742,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case 'OFFSCREEN_CHUNK_PROGRESS':
       if (message.requestId) {
-        console.log(
+        debugLog(
           `[ChunkFlow] progress: request=${message.requestId} stage=${message.stage || 'chunking'} ` +
           `percent=${typeof message.progressPercent === 'number' ? message.progressPercent : 'n/a'} ` +
           `status=${message.statusText || ''}`
@@ -774,7 +762,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
 
     default:
-      console.log('Unknown message type:', message.type);
+      debugLog('Unknown message type:', message.type);
       break;
   }
 });
@@ -796,7 +784,7 @@ chrome.downloads.onChanged.addListener((downloadDelta) => {
 });
 
 chrome.downloads.onCreated.addListener(async (downloadItem) => {
-  console.log('Download created:', downloadItem.id);
+  debugLog('Download created:', downloadItem.id);
 
   const pending = await consumePendingMode(downloadItem);
   if (pending?.mode) {
@@ -822,7 +810,7 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
 });
 
 chrome.downloads.onErased.addListener((downloadId) => {
-  console.log('Download erased:', downloadId);
+  debugLog('Download erased:', downloadId);
   if (popupPort) popupPort.postMessage({ type: 'DOWNLOAD_UPDATE' });
 });
 
@@ -840,7 +828,7 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === 'download-with-chunks' && info.linkUrl && Utils.isHttpOrHttpsUrl(info.linkUrl)) {
-    console.log('Context menu download:', info.linkUrl);
+    debugLog('Context menu download:', info.linkUrl);
     getChunkCount((count) => {
       downloadInChunks(info.linkUrl, count);
     });

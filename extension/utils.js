@@ -81,6 +81,39 @@ const Utils = {
     }
 
     return { mode, pendingModeByUrl: next };
+  },
+
+  // Parse an HTTP Content-Range header value, e.g. "bytes 0-1023/4096".
+  // Returns { start, end, total } (total null for "*") or null if malformed.
+  parseContentRange: (value) => {
+    const match = /^bytes\s+(\d+)-(\d+)\/(\d+|\*)$/i.exec(value || '');
+    if (!match) return null;
+    return {
+      start: Number(match[1]),
+      end: Number(match[2]),
+      total: match[3] === '*' ? null : Number(match[3])
+    };
+  },
+
+  // True if a HEAD/GET response advertises byte-range support via Accept-Ranges.
+  headAdvertisesByteRanges: (response) => {
+    const raw = (response.headers.get('Accept-Ranges') || '').toLowerCase().trim();
+    if (!raw || raw === 'none') return false;
+    return raw.split(',').map((token) => token.trim()).includes('bytes') || raw.includes('bytes');
+  },
+
+  // Size-aware timeout for offscreen chunk assembly. Conservative ~0.5 MB/s
+  // throughput assumption + fixed overhead + per-extra-chunk and per-retry bonuses,
+  // clamped to [3 min, 15 min].
+  computeOffscreenTimeoutMs: (fileSize, chunkCount = 10, attemptIndex = 0) => {
+    const MIN_MS = 3 * 60 * 1000;
+    const MAX_MS = 15 * 60 * 1000;
+    const minThroughputBytesPerSec = 512 * 1024;
+    const transferMs = Math.ceil((fileSize / minThroughputBytesPerSec) * 1000);
+    const chunkOverheadMs = Math.max(0, (chunkCount - 4) * 8 * 1000);
+    const retryBonusMs = Math.max(0, attemptIndex) * 60 * 1000;
+    const estimated = transferMs + 60 * 1000 + chunkOverheadMs + retryBonusMs;
+    return Math.min(MAX_MS, Math.max(MIN_MS, estimated));
   }
 };
 
