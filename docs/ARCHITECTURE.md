@@ -37,7 +37,7 @@ sequenceDiagram
     U->>CS: click / right-click / paste URL
     CS->>BG: START_DOWNLOAD {url}
     BG->>BG: getChunkCount() → chrome.storage.local.chunkCount (clamp 2–32)
-    BG->>BG: HEAD request + range-support check + 500MB size guard
+    BG->>BG: HEAD request + range-support check + 250MB size guard
     BG->>OS: OFFSCREEN_BUILD_OBJECT_URL {url, numberOfChunks, fileSize}
     OS-->>PU: OFFSCREEN_CHUNK_PROGRESS (heartbeats)
     OS->>OS: parallel Range fetches → validate 206 → merge Uint8Array → blob URL
@@ -53,7 +53,7 @@ sequenceDiagram
 
 **Fallback decisions** (each ends the chunked attempt early):
 - HEAD/probe shows no range support → `normal` (native download).
-- `Content-Length` > 500 MB (`CHUNK_MAX_BYTES`) → `normal` (avoids assembling GBs in memory).
+- `Content-Length` > 250 MB (`CHUNK_MAX_BYTES`) → `normal` (peak assembly memory is ~3× file size).
 - Offscreen assembly throws after all retries → `fallback` (native download of original URL).
 - Chunk attempt fails → retried at fewer chunks (`[configured, 6, 4]`) before giving up.
 
@@ -129,7 +129,7 @@ only accepts messages whose `sender.url` is `background.js`.
 - **Service worker unloads when idle** → no long-lived in-memory state; mode queue + settings
   live in `chrome.storage.local`.
 - **No `URL.createObjectURL` in the worker** → offscreen document for blob assembly.
-- **In-memory merge** → 500 MB guard (`CHUNK_MAX_BYTES`) diverts large files to the native
+- **In-memory merge** → 250 MB guard (`CHUNK_MAX_BYTES`) diverts large files to the native
   downloader to avoid OOM.
 - **Blobs must be revoked in their creating context** → background messages offscreen to revoke.
 
