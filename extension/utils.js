@@ -61,26 +61,32 @@ const Utils = {
     return isNaN(n) || n === 0 ? def : Math.min(max, Math.max(min, Math.round(n)));
   },
 
-  enqueueModeForUrl: (pendingModeByUrl, url, mode) => {
-    const next = { ...(pendingModeByUrl || {}) };
-    const queue = Array.isArray(next[url]) ? [...next[url]] : [];
-    queue.push(mode);
-    next[url] = queue;
-    return next;
+  // Select the pending-mode entry for a newly-created download from the FIFO
+  // queue. Drops entries older than minTimestamp, then prefers an exact
+  // sourceUrl match (so a specific ChunkFlow download claims its own badge);
+  // if none matches, falls back to the oldest fresh entry (resilient when the
+  // created URL differs from what we enqueued, e.g. after a redirect).
+  // Returns { entry, remaining }.
+  selectPendingMode: (queue, url, minTimestamp = 0) => {
+    const fresh = (Array.isArray(queue) ? queue : []).filter((e) => e && e.at > minTimestamp);
+    let idx = url ? fresh.findIndex((e) => e.sourceUrl && e.sourceUrl === url) : -1;
+    if (idx === -1) idx = fresh.length ? 0 : -1;
+    const entry = idx >= 0 ? fresh[idx] : null;
+    const remaining = idx >= 0 ? fresh.filter((_, i) => i !== idx) : fresh;
+    return { entry, remaining };
   },
 
-  consumeModeForUrl: (pendingModeByUrl, url) => {
-    const next = { ...(pendingModeByUrl || {}) };
-    const queue = Array.isArray(next[url]) ? [...next[url]] : [];
-    const mode = queue.shift();
-
-    if (queue.length > 0) {
-      next[url] = queue;
-    } else {
-      delete next[url];
+  // Roll back a queued pending mode when its download failed to start. Removes
+  // the newest entry matching sourceUrl (leaves others intact). Returns new queue.
+  removePendingMode: (queue, sourceUrl) => {
+    const arr = Array.isArray(queue) ? [...queue] : [];
+    for (let i = arr.length - 1; i >= 0; i--) {
+      if (arr[i] && arr[i].sourceUrl === sourceUrl) {
+        arr.splice(i, 1);
+        break;
+      }
     }
-
-    return { mode, pendingModeByUrl: next };
+    return arr;
   },
 
   // Parse an HTTP Content-Range header value, e.g. "bytes 0-1023/4096".
