@@ -86,6 +86,8 @@ function fetchWithRetry(url, options, maxRetries = 1) {
   });
 }
 
+let offscreenReadyPromise = null;
+
 async function ensureOffscreenDocument() {
   if (!chrome.offscreen || !chrome.offscreen.createDocument) {
     throw new Error('chrome.offscreen API is unavailable');
@@ -102,11 +104,23 @@ async function ensureOffscreenDocument() {
     if (contexts.length > 0) return;
   }
 
-  await chrome.offscreen.createDocument({
-    url: OFFSCREEN_DOCUMENT_PATH,
-    reasons: ['BLOBS'],
-    justification: 'Chunked downloads require Blob URL creation in a document context.'
-  });
+  // Dedupe concurrent creation: two downloads can both observe "no document" and
+  // both call createDocument(), which throws "Only a single offscreen document may
+  // be created". Share one in-flight promise and treat that error as success.
+  if (!offscreenReadyPromise) {
+    offscreenReadyPromise = chrome.offscreen.createDocument({
+      url: OFFSCREEN_DOCUMENT_PATH,
+      reasons: ['BLOBS'],
+      justification: 'Chunked downloads require Blob URL creation in a document context.'
+    }).catch((err) => {
+      if (/single offscreen document|already exists?/i.test(err?.message || '')) return;
+      throw err;
+    }).finally(() => {
+      offscreenReadyPromise = null;
+    });
+  }
+
+  await offscreenReadyPromise;
 }
 
 async function buildObjectUrlInOffscreen(url, numberOfChunks, fileSize, mimeType, requestId, timeoutMs) {
@@ -189,14 +203,20 @@ async function probeByteRangeSupport(url) {
       0
     );
 
-    if (probe.status !== 206) {
+    const probeStatus = probe.status;
+    const contentRange = probe.headers.get('Content-Range') || '';
+    // We only need the status + Content-Range header, never the body. Cancel it so a
+    // server that ignored the Range header (200 with the full payload) doesn't keep
+    // streaming the entire file into a discarded stream.
+    try { await probe.body?.cancel(); } catch { /* body may be null/locked */ }
+
+    if (probeStatus !== 206) {
       return {
         supported: false,
-        reason: `Range probe returned HTTP ${probe.status} instead of 206.`
+        reason: `Range probe returned HTTP ${probeStatus} instead of 206.`
       };
     }
 
-    const contentRange = probe.headers.get('Content-Range') || '';
     if (!/^bytes\s+0-0\//i.test(contentRange)) {
       return {
         supported: false,
