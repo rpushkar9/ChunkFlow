@@ -143,7 +143,7 @@ ChunkFlow was originally built during an internship at **iHub — the data-scien
 ## 🎯 Performance Benefits
 
 ### Download Speed Improvements
-- **2-5x faster** on supported servers with good bandwidth
+- **~25–55% faster** on supported servers (server-dependent — ~25% on typical servers, 40–55% on high-throughput ones; larger transfers benefit most)
 - **Better reliability** on unstable connections (chunk-level retry)
 - **Resume capability** for interrupted downloads
 - **Memory efficient** chunk processing
