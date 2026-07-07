@@ -32,12 +32,23 @@ ChunkFlow is a powerful Chrome extension that **accelerates downloads and upload
 
 ## 🏗️ Architecture
 
+> For the full end-to-end wiring (message flow diagram, storage keys, mode-attribution state machine, MV3 constraints), see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+
 ### Background Service Worker (`background.js`)
-- **Download engine**: Implements `downloadInChunks()` with HEAD request validation, parallel fetch operations, and chunk merging
+- **Download orchestrator**: `downloadInChunks()` runs the HEAD/range-support checks, applies the size guard, then delegates the actual chunk fetching + merging to the offscreen document and hands the resulting blob URL to Chrome's downloader
+- **Chunk count**: `getChunkCount()` reads the user's saved value from `chrome.storage.local` (clamped 2–32, default 10)
+- **Mode attribution**: tags every download as `chunked` / `normal` / `fallback` / `browser` via a storage-backed pending-mode queue that survives service-worker suspension (see `enqueuePendingMode` / `consumePendingMode`)
+- **Blob lifecycle**: revokes each offscreen blob URL once its download reaches a terminal state (`OFFSCREEN_REVOKE_URL`) to avoid leaking memory across repeated downloads
 - **Upload engine**: Handles both normal and chunked uploads with server compatibility detection
 - **Chrome Downloads API integration**: Manages pause/resume/restart/delete operations
 - **Storage management**: Persists upload history to `chrome.storage.local`
 - **Event-driven updates**: Real-time communication with popup via ports
+
+### Offscreen Document (`offscreen.html`, `offscreen.js`)
+- **Why it exists**: `URL.createObjectURL` is unavailable inside an MV3 service worker, so chunk assembly runs in an offscreen document instead
+- **Chunk fetching**: `buildObjectUrl()` issues parallel `Range` requests, validates each `206`/`Content-Range` response, merges the buffers into one `Uint8Array`, and returns a `blob:` URL
+- **Progress + cancel**: streams `OFFSCREEN_CHUNK_PROGRESS` heartbeats back to the popup and supports `OFFSCREEN_CANCEL_REQUEST` via `AbortController`
+- **Trusted sender gate**: only accepts messages originating from `background.js`
 
 ### Content Script (`contentScript.js`)
 - **Smart link detection**: Identifies download links by file extension and `download` attribute
@@ -62,11 +73,12 @@ ChunkFlow is a powerful Chrome extension that **accelerates downloads and upload
 ## 🔧 Technical Implementation
 
 ### Chunked Download Process
-1. **HEAD request** to check `Accept-Ranges: bytes` header
-2. **Parallel fetching** of byte ranges (default: 10 chunks)
-3. **Chunk validation** and error handling per segment  
-4. **Memory-efficient merging** into single `Uint8Array`
-5. **Blob creation** and automatic download trigger
+1. **HEAD request** to check `Accept-Ranges: bytes` (falls back to a live range probe if the header is ambiguous)
+2. **Size guard**: files larger than 500 MB skip in-memory chunking and use the native downloader (avoids OOM in the worker)
+3. **Parallel fetching** of byte ranges in the offscreen document (user-configured count, default 10, with automatic retry at fewer chunks on failure)
+4. **Chunk validation** per segment (expects `206` + matching `Content-Range` + exact byte length)
+5. **Memory-efficient merging** into a single `Uint8Array`, then **blob creation** and automatic download trigger
+6. **Blob revocation** once the download completes or is interrupted
 
 ### Chunked Upload Process  
 1. **Server compatibility check** via HEAD request
@@ -83,10 +95,12 @@ ChunkFlow is a powerful Chrome extension that **accelerates downloads and upload
 
 ## 📋 Permissions & Security
 - **`downloads`**: Manage Chrome downloads
-- **`storage`**: Persist upload history  
-- **`contextMenus`**: Right-click download options
-- **`<all_urls>`**: Detect download links on any website
+- **`storage`**: Persist upload history, chunk-count setting, and download-mode metadata
+- **`contextMenus`**: Right-click "Download with ChunkFlow" option
+- **`offscreen`**: Create the offscreen document that assembles chunks into a blob
+- **Host permissions `http://*/*`, `https://*/*`**: Detect download links and fetch chunks on any site
 - **Optional `management`**: Extension management features
+- **Sender validation**: background ↔ offscreen messages are gated on the trusted sender URL
 
 ## 🚀 Installation & Usage
 
