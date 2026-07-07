@@ -3,12 +3,28 @@ importScripts('utils.js');
 // Files larger than this are sent straight to Chrome's native downloader to avoid
 // assembling gigabytes of ArrayBuffers in service-worker memory (OOM risk).
 const CHUNK_MAX_BYTES = 500 * 1024 * 1024; // 500 MB
-const FORCED_CHUNK_COUNT = 10;
+const DEFAULT_CHUNK_COUNT = 10; // used when the user hasn't set a chunk count yet
 const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
 const OFFSCREEN_BUILD_TIMEOUT_MIN_MS = 3 * 60 * 1000;
 const OFFSCREEN_BUILD_TIMEOUT_MAX_MS = 15 * 60 * 1000;
 
 let popupPort = null;
+
+// Blob object URLs are created in the offscreen document and handed to
+// chrome.downloads.download. Chrome copies the bytes while the download runs,
+// so we must keep each URL alive until the item completes/fails, then revoke it
+// in the offscreen context (the only place it can be revoked) to free memory.
+// Best-effort: if the service worker unloads mid-download the map is lost and
+// the blob is freed when the offscreen document is torn down instead.
+const chunkedObjectUrls = new Map(); // downloadId -> objectURL
+
+function revokeObjectUrlInOffscreen(objectUrl) {
+  if (!objectUrl || !objectUrl.startsWith('blob:')) return;
+  chrome.runtime.sendMessage({ type: 'OFFSCREEN_REVOKE_URL', objectUrl }, () => {
+    // Swallow "no receiver" errors if the offscreen document is already gone.
+    void chrome.runtime.lastError;
+  });
+}
 
 function createStorageQueue(defaults) {
   let chain = Promise.resolve();
@@ -476,7 +492,14 @@ async function downloadInChunks(url, numberOfChunks = 10) {
     await enqueuePendingMode(objectURL, 'chunked', {
       reason: `Range support confirmed. File assembled from ${usedChunkCount} parallel chunks in offscreen context.`
     });
-    chrome.downloads.download({ url: objectURL, filename });
+    chrome.downloads.download({ url: objectURL, filename }, (downloadId) => {
+      if (chrome.runtime.lastError || downloadId == null) {
+        // Download never started — revoke immediately so the blob isn't leaked.
+        revokeObjectUrlInOffscreen(objectURL);
+        return;
+      }
+      chunkedObjectUrls.set(downloadId, objectURL);
+    });
 
     if (popupPort) {
       popupPort.postMessage({ type: 'DOWNLOAD_READY', url: objectURL, filename, isChunked: true });
@@ -606,8 +629,11 @@ function storeUploadedFileDetails(fileName, fileSize, fileType) {
 // ---------------------------------------------------------------------------
 
 function getChunkCount(callback) {
-  console.log(`[ChunkFlow] getChunkCount: forced debug value ${FORCED_CHUNK_COUNT}`);
-  callback(FORCED_CHUNK_COUNT);
+  chrome.storage.local.get({ chunkCount: DEFAULT_CHUNK_COUNT }, (data) => {
+    const count = Utils.clampChunkCount(data.chunkCount, 2, 32, DEFAULT_CHUNK_COUNT);
+    console.log(`[ChunkFlow] getChunkCount: using ${count} (saved: ${data.chunkCount})`);
+    callback(count);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -759,6 +785,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 chrome.downloads.onChanged.addListener((downloadDelta) => {
   if (popupPort) popupPort.postMessage({ type: 'DOWNLOAD_UPDATE' });
+
+  // Once a chunked download reaches a terminal state, revoke its blob URL.
+  const state = downloadDelta.state?.current;
+  if ((state === 'complete' || state === 'interrupted') && chunkedObjectUrls.has(downloadDelta.id)) {
+    const objectUrl = chunkedObjectUrls.get(downloadDelta.id);
+    chunkedObjectUrls.delete(downloadDelta.id);
+    revokeObjectUrlInOffscreen(objectUrl);
+  }
 });
 
 chrome.downloads.onCreated.addListener(async (downloadItem) => {

@@ -456,11 +456,24 @@ const loadChunkCount = () => {
   });
 };
 
+let chunkHintResetTimer = null;
 const saveChunkCount = (value) => {
   const val = Utils.clampChunkCount(value);
   chrome.storage.local.set({ chunkCount: val }, () => {
     const input = document.getElementById('chunk-count');
     if (input) input.value = val;
+
+    // Flash a "Saved" confirmation so it's clear the setting took effect.
+    const hint = document.getElementById('chunk-count-hint');
+    if (hint) {
+      hint.textContent = `Saved ✓ next download uses ${val} chunks`;
+      hint.classList.add('saved');
+      clearTimeout(chunkHintResetTimer);
+      chunkHintResetTimer = setTimeout(() => {
+        hint.textContent = '2–32 parallel chunks';
+        hint.classList.remove('saved');
+      }, 2000);
+    }
   });
 };
 

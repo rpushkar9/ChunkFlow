@@ -49,6 +49,17 @@ body {
   border-radius: 4px;
 }
 
+.chunk-count-hint {
+  font-size: 12px;
+  color: #777;
+  transition: color 0.2s ease;
+}
+
+.chunk-count-hint.saved {
+  color: #2e7d32;
+  font-weight: 600;
+}
+
 .quick-start-row {
   padding: 0 10px 10px;
   display: grid;

@@ -126,13 +126,29 @@ async function buildObjectUrl(url, numberOfChunks, fileSize, mimeType, requestId
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type !== 'OFFSCREEN_BUILD_OBJECT_URL' && message?.type !== 'OFFSCREEN_CANCEL_REQUEST') {
+  if (
+    message?.type !== 'OFFSCREEN_BUILD_OBJECT_URL' &&
+    message?.type !== 'OFFSCREEN_CANCEL_REQUEST' &&
+    message?.type !== 'OFFSCREEN_REVOKE_URL'
+  ) {
     return false;
   }
 
   const expectedSenderUrl = chrome.runtime.getURL('background.js');
   if (sender?.id !== chrome.runtime.id || sender?.url !== expectedSenderUrl) {
-    sendResponse({ success: false, error: 'Untrusted OFFSCREEN_BUILD_OBJECT_URL sender' });
+    sendResponse({ success: false, error: 'Untrusted offscreen message sender' });
+    return false;
+  }
+
+  if (message.type === 'OFFSCREEN_REVOKE_URL') {
+    if (message.objectUrl) {
+      try {
+        URL.revokeObjectURL(message.objectUrl);
+      } catch (error) {
+        console.warn('[ChunkFlow] revokeObjectURL failed:', error?.message || error);
+      }
+    }
+    sendResponse({ success: true });
     return false;
   }
 
