@@ -1,8 +1,10 @@
 importScripts('utils.js');
 
-// Files larger than this are sent straight to Chrome's native downloader to avoid
-// assembling gigabytes of ArrayBuffers in service-worker memory (OOM risk).
-const CHUNK_MAX_BYTES = 500 * 1024 * 1024; // 500 MB
+// Files larger than this are sent straight to Chrome's native downloader.
+// Assembly holds the chunk buffers + a merged Uint8Array + a Blob simultaneously,
+// so transient peak memory in the offscreen document is ~3x the file size. Keep
+// the cap conservative to avoid OOM on lower-memory machines (250 MB → ~750 MB peak).
+const CHUNK_MAX_BYTES = 250 * 1024 * 1024; // 250 MB
 const DEFAULT_CHUNK_COUNT = 10; // used when the user hasn't set a chunk count yet
 const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
 
@@ -460,7 +462,7 @@ async function downloadInChunks(url, numberOfChunks = 10) {
         `(${Utils.formatFileSize(fileSize)} > ${Utils.formatFileSize(CHUNK_MAX_BYTES)}) — using normal download`);
       await removeActiveChunkFetch(requestId);
       await startNativeDownload(finalUrl, 'normal', {
-        reason: `File exceeded 500 MB in-memory chunking safety limit (${Utils.formatFileSize(fileSize)}).`
+        reason: `File exceeded the ${Utils.formatFileSize(CHUNK_MAX_BYTES)} in-memory chunking safety limit (${Utils.formatFileSize(fileSize)}).`
       }, filename);
       return;
     }
@@ -589,7 +591,10 @@ function uploadFileNormally(fileData, fileName, uploadUrl) {
   const blob = new Blob([fileData]);
   formData.append('file', blob, fileName);
 
-  return fetch(uploadUrl, { method: 'POST', body: formData })
+  // Match the credential policy of the capability probe (checkServerSupport uses
+  // credentials:'include'), otherwise an authenticated endpoint can probe as
+  // supported and then reject the actual upload.
+  return fetch(uploadUrl, { method: 'POST', body: formData, credentials: 'include' })
     .then(response => {
       if (response.ok) {
         return response.text();
@@ -618,6 +623,7 @@ function uploadChunk(chunkData, uploadUrl, start, end, totalSize) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', uploadUrl, true);
+    xhr.withCredentials = true; // match the probe + normal-upload credential policy
     xhr.setRequestHeader('Content-Range', `bytes ${start}-${end}/${totalSize}`);
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
 

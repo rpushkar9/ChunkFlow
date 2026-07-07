@@ -74,7 +74,7 @@ ChunkFlow is a powerful Chrome extension that **accelerates downloads and upload
 
 ### Chunked Download Process
 1. **HEAD request** to check `Accept-Ranges: bytes` (falls back to a live range probe if the header is ambiguous)
-2. **Size guard**: files larger than 500 MB skip in-memory chunking and use the native downloader (avoids OOM in the worker)
+2. **Size guard**: files larger than 250 MB skip in-memory chunking and use the native downloader (peak assembly memory is ~3× file size)
 3. **Parallel fetching** of byte ranges in the offscreen document (user-configured count, default 10, with automatic retry at fewer chunks on failure)
 4. **Chunk validation** per segment (expects `206` + matching `Content-Range` + exact byte length)
 5. **Memory-efficient merging** into a single `Uint8Array`, then **blob creation** and automatic download trigger
@@ -100,6 +100,8 @@ ChunkFlow is a powerful Chrome extension that **accelerates downloads and upload
 - **`offscreen`**: Create the offscreen document that assembles chunks into a blob
 - **Host permissions `http://*/*`, `https://*/*`**: Detect download links and fetch chunks on any site
 - **Sender validation**: background ↔ offscreen messages are gated on the trusted sender URL
+
+> Full trust-surface analysis, accepted risks, and open hardening options: **[docs/SECURITY.md](docs/SECURITY.md)**.
 
 ## 🚀 Installation & Usage
 
@@ -159,7 +161,7 @@ ChunkFlow is a powerful Chrome extension that **accelerates downloads and upload
 - `npm test` - unit tests for shared utilities
 - `npm run test:e2e` - Playwright smoke test that loads the unpacked extension and verifies:
   - `20MB` URL is tagged `chunked`
-  - `1GB` URL is tagged `normal` (500MB in-memory guard)
+  - `1GB` URL is tagged `normal` (250 MB in-memory guard)
 
 ## 📝 Technical Notes
 - **Chunk merging**: Uses `Uint8Array` for efficient memory handling
