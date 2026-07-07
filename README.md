@@ -6,6 +6,9 @@
 ## 🚀 Overview
 ChunkFlow is a powerful Chrome extension that **accelerates downloads and uploads** by splitting files into chunks and processing them in parallel. When servers support HTTP range requests, ChunkFlow can significantly speed up file transfers by downloading/uploading multiple chunks simultaneously, then seamlessly merging them back together.
 
+## 🎓 Background
+ChunkFlow was originally built during an internship at **iHub — the data-science research hub of the International Institute of Information Technology, Hyderabad (IIIT-H)**, where researchers routinely move **100 GB–TB-scale** datasets and download throughput was a real bottleneck. I **led a small team** (building the majority myself) to ship a portable, non-technical-friendly accelerator the lab could use with no setup or command line. On the lab's workloads it cut download times by roughly **25% on typical servers and 40–55% on high-throughput ones**. This repository is the continued, open-source version of that project.
+
 ## ⚡ Key Features
 
 ### 🔽 Smart Download Management
