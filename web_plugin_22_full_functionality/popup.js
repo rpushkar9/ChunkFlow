@@ -34,21 +34,112 @@ const formatDownloadTime = (isoString) => {
 /**
  * Render the downloads list.
  * modes — object from chrome.storage.local 'downloadModes', keyed by string download ID.
- *   Values: 'chunked' | 'normal' | 'fallback'
+ *   Values: 'chunked' | 'normal' | 'fallback' | 'browser'
+ * modeMeta — object from chrome.storage.local 'downloadModeMeta', keyed by string download ID.
+ *   Values: { source, reason, sourceUrl, recordedAt }
  * activeFetches — array of { url, startTime } for chunk fetches still assembling
  *   (no Chrome download item exists yet for these).
  */
-const updateDownloadsList = (downloads, modes = {}, activeFetches = []) => {
+const getModeBadgeText = (mode) => (
+  mode === 'chunked'  ? '⚡ Chunked'  :
+  mode === 'fallback' ? '⚠ Fallback' :
+  mode === 'browser'  ? '🌐 Browser'  : '⬇ Normal (CF)'
+);
+
+const getModeDetailText = (mode, meta) => {
+  const sourceLabel = meta?.source === 'browser' ? 'Path: Browser' : 'Path: ChunkFlow';
+  const reason = meta?.reason;
+
+  if (reason) return `${sourceLabel} - ${reason}`;
+
+  if (mode === 'chunked') return `${sourceLabel} - Parallel chunk path succeeded.`;
+  if (mode === 'normal') return `${sourceLabel} - Native Chrome path used by design.`;
+  if (mode === 'fallback') return `${sourceLabel} - Chunking failed, then switched to native path.`;
+  if (mode === 'browser') return 'Path: Browser - Download started outside ChunkFlow.';
+  return '';
+};
+
+const updateDownloadsList = (downloads, modes = {}, activeFetches = [], modeMeta = {}) => {
   const downloadsListDiv = document.getElementById('downloads-list');
+  const runtimeBanner = document.getElementById('chunkflow-runtime-banner');
   downloadsListDiv.innerHTML = '';
 
   const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
   const pendingFetches = activeFetches.filter(e => e.startTime > fiveMinutesAgo);
 
+  if (runtimeBanner) {
+    if (pendingFetches.length > 0) {
+      const first = pendingFetches[0];
+      const elapsedSec = Math.max(0, Math.round((Date.now() - (first.startTime || Date.now())) / 1000));
+      runtimeBanner.style.display = 'block';
+      runtimeBanner.textContent = `ChunkFlow is working (${pendingFetches.length} active). ` +
+        `${first.statusText || 'Downloading chunks...'} (${elapsedSec}s)`;
+    } else {
+      runtimeBanner.style.display = 'none';
+      runtimeBanner.textContent = '';
+    }
+  }
+
   if (downloads.length === 0 && pendingFetches.length === 0) {
     downloadsListDiv.innerHTML = '<p style="text-align: center; color: #666; padding: 20px;">No downloads yet</p>';
     return;
   }
+
+  // Show "preparing" placeholders for chunk fetches first so active work is
+  // always visible at the top.
+  pendingFetches.forEach(e => {
+    let displayName;
+    try {
+      displayName = new URL(e.url).pathname.split('/').pop() || e.url;
+    } catch {
+      displayName = e.url;
+    }
+
+    const pendingDiv = document.createElement('div');
+    pendingDiv.className = 'download-item pending-chunk';
+
+    const nameDiv = document.createElement('div');
+    nameDiv.className = 'download-name';
+    nameDiv.textContent = displayName;
+    pendingDiv.appendChild(nameDiv);
+
+    const statusDiv = document.createElement('div');
+    statusDiv.className = 'download-status';
+    statusDiv.textContent = `Status: ${e.statusText || 'Fetching chunks...'}`;
+    pendingDiv.appendChild(statusDiv);
+
+    const stageDiv = document.createElement('div');
+    stageDiv.className = 'download-mode-detail';
+    stageDiv.textContent = `Path: ChunkFlow - Stage: ${e.stage || 'chunking'}`;
+    pendingDiv.appendChild(stageDiv);
+
+    const badgeDiv = document.createElement('div');
+    badgeDiv.className = 'download-mode-badge badge-chunked';
+    badgeDiv.textContent = '⚡ Chunked (preparing)';
+    pendingDiv.appendChild(badgeDiv);
+
+    const progressBar = document.createElement('div');
+    progressBar.className = 'progress-bar';
+
+    const progress = document.createElement('div');
+    progress.className = 'progress';
+    const elapsedSec = Math.max(0, Math.round((Date.now() - (e.startTime || Date.now())) / 1000));
+    const hasNumericProgress = typeof e.progressPercent === 'number';
+    const pendingPercent = hasNumericProgress
+      ? Math.max(1, Math.min(100, Math.round(e.progressPercent)))
+      : 100;
+
+    progress.style.width = `${pendingPercent}%`;
+    progress.style.opacity = hasNumericProgress ? '0.85' : '0.45';
+    if (!hasNumericProgress) progress.classList.add('progress-indeterminate');
+    progress.textContent = hasNumericProgress
+      ? `${pendingPercent}% (${elapsedSec}s)`
+      : `Working... (${elapsedSec}s)`;
+    progressBar.appendChild(progress);
+
+    pendingDiv.appendChild(progressBar);
+    downloadsListDiv.appendChild(pendingDiv);
+  });
 
   downloads.forEach((download) => {
     const downloadDiv = document.createElement('div');
@@ -84,11 +175,13 @@ const updateDownloadsList = (downloads, modes = {}, activeFetches = []) => {
         mode === 'fallback' ? 'badge-fallback' :
         mode === 'browser'  ? 'badge-browser'  : 'badge-normal'
       );
-      modeBadge.textContent =
-        mode === 'chunked'  ? '⚡ Chunked'  :
-        mode === 'fallback' ? '⚠ Fallback' :
-        mode === 'browser'  ? '↓ Browser'  : '↓ Normal';
+      modeBadge.textContent = getModeBadgeText(mode);
       downloadDiv.appendChild(modeBadge);
+
+      const modeDetail = document.createElement('div');
+      modeDetail.className = 'download-mode-detail';
+      modeDetail.textContent = getModeDetailText(mode, modeMeta[String(download.id)]);
+      downloadDiv.appendChild(modeDetail);
     }
 
     // Size
@@ -157,48 +250,6 @@ const updateDownloadsList = (downloads, modes = {}, activeFetches = []) => {
     downloadsListDiv.appendChild(downloadDiv);
   });
 
-  // Show "preparing" placeholders for chunk fetches that haven't produced a
-  // Chrome download item yet (chunks still assembling in the service worker).
-  // Entries older than 5 minutes are treated as orphaned and skipped.
-  pendingFetches.forEach(e => {
-    let displayName;
-    try {
-      displayName = new URL(e.url).pathname.split('/').pop() || e.url;
-    } catch {
-      displayName = e.url;
-    }
-
-    const pendingDiv = document.createElement('div');
-    pendingDiv.className = 'download-item';
-
-    const nameDiv = document.createElement('div');
-    nameDiv.className = 'download-name';
-    nameDiv.textContent = displayName;
-    pendingDiv.appendChild(nameDiv);
-
-    const statusDiv = document.createElement('div');
-    statusDiv.className = 'download-status';
-    statusDiv.textContent = 'Status: Fetching chunks...';
-    pendingDiv.appendChild(statusDiv);
-
-    const badgeDiv = document.createElement('div');
-    badgeDiv.className = 'download-mode-badge badge-chunked';
-    badgeDiv.textContent = '⚡ Chunked (preparing)';
-    pendingDiv.appendChild(badgeDiv);
-
-    const progressBar = document.createElement('div');
-    progressBar.className = 'progress-bar';
-
-    const progress = document.createElement('div');
-    progress.className = 'progress';
-    progress.style.width = '100%';
-    progress.style.opacity = '0.4';
-    progress.textContent = 'assembling...';
-    progressBar.appendChild(progress);
-
-    pendingDiv.appendChild(progressBar);
-    downloadsListDiv.appendChild(pendingDiv);
-  });
 };
 
 // ---------------------------------------------------------------------------
@@ -238,6 +289,27 @@ const deleteDownload = (downloadId) => {
   setTimeout(fetchDownloads, 500);
 };
 
+const startQuickDownload = () => {
+  const input = document.getElementById('quick-download-url');
+  if (!input) return;
+
+  const url = input.value.trim();
+  if (!Utils.isHttpOrHttpsUrl(url)) {
+    showMessage('Enter a valid http(s) file URL.', 'error');
+    return;
+  }
+
+  chrome.runtime.sendMessage({ type: 'START_DOWNLOAD', url }, (response) => {
+    if (response && response.success) {
+      showMessage('Started download through ChunkFlow.', 'success');
+      input.value = '';
+      fetchDownloads();
+    } else {
+      showMessage(`Could not start: ${response?.error || 'Unknown error'}`, 'error');
+    }
+  });
+};
+
 /**
  * Fetch the 50 most-recent downloads from Chrome's downloads API (all time,
  * not just the last hour), then read downloadModes + activeChunkFetches from
@@ -254,9 +326,9 @@ const fetchDownloads = () => {
   chrome.downloads.search({ orderBy: ['-startTime'], limit: 50 }, (downloads) => {
     if (gen !== fetchGeneration) return; // superseded
 
-    chrome.storage.local.get({ downloadModes: {}, activeChunkFetches: [] }, (data) => {
+    chrome.storage.local.get({ downloadModes: {}, downloadModeMeta: {}, activeChunkFetches: [] }, (data) => {
       if (gen !== fetchGeneration) return; // superseded
-      updateDownloadsList(downloads, data.downloadModes, data.activeChunkFetches);
+      updateDownloadsList(downloads, data.downloadModes, data.activeChunkFetches, data.downloadModeMeta);
     });
   });
 };
@@ -447,6 +519,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('upload-button').addEventListener('click', handleFileUpload);
 
+  const quickStartButton = document.getElementById('quick-start-button');
+  if (quickStartButton) {
+    quickStartButton.addEventListener('click', startQuickDownload);
+  }
+
+  const quickUrlInput = document.getElementById('quick-download-url');
+  if (quickUrlInput) {
+    quickUrlInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') startQuickDownload();
+    });
+  }
+
   chrome.runtime.sendMessage({ type: 'GET_UPLOADED_FILES' }, response => {
     if (response && response.uploadedFiles) displayUploadedFiles();
   });
@@ -464,26 +548,9 @@ port.onMessage.addListener((message) => {
   if (message.type === 'DOWNLOAD_UPDATE') {
     fetchDownloads();
   } else if (message.type === 'DOWNLOAD_READY') {
-    const downloadLink = document.createElement('a');
-    downloadLink.href = message.url;
-    downloadLink.textContent = 'Download Merged File';
-    downloadLink.download = message.filename || 'downloaded_file';
-    downloadLink.style.cssText = 'display: block; margin: 10px 0; padding: 8px; background: #4caf50; color: white; text-decoration: none; border-radius: 4px; text-align: center;';
-
-    const downloadsSection = document.getElementById('downloads-section');
-    downloadsSection.insertBefore(downloadLink, downloadsSection.firstChild);
-
     if (message.isChunked) {
-      const chunkedLabel = document.createElement('span');
-      chunkedLabel.textContent = ' (Chunked Download)';
-      chunkedLabel.style.color = 'blue';
-      chunkedLabel.style.fontWeight = 'bold';
-      downloadLink.appendChild(chunkedLabel);
+      showMessage('Chunked download prepared and handed to Chrome.', 'success');
     }
-
-    setTimeout(() => {
-      if (downloadLink.parentNode) downloadLink.parentNode.removeChild(downloadLink);
-    }, 30000);
   } else if (message.type === 'ERROR') {
     showMessage(message.message, 'error');
   }

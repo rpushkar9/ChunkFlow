@@ -142,6 +142,12 @@ ChunkFlow is a powerful Chrome extension that **accelerates downloads and upload
 - **File detection**: Automatic by extension
 - **Memory usage**: Optimized for large files
 
+## 🧪 Validation commands
+- `npm test` - unit tests for shared utilities
+- `npm run test:e2e` - Playwright smoke test that loads the unpacked extension and verifies:
+  - `20MB` URL is tagged `chunked`
+  - `1GB` URL is tagged `normal` (500MB in-memory guard)
+
 ## 📝 Technical Notes
 - **Chunk merging**: Uses `Uint8Array` for efficient memory handling
 - **URL validation**: Prevents malformed download attempts  

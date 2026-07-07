@@ -14,10 +14,23 @@
   </div>
 
   <div id="downloads-section" class="tab-content active">
+    <details class="help-card" open>
+      <summary>How to start ChunkFlow downloads</summary>
+      <div class="help-body">
+        <div><strong>Best trigger:</strong> Right-click a file link on a webpage and choose <em>Download with ChunkFlow</em>.</div>
+        <div><strong>Normal click:</strong> Auto-intercepts common file extensions (now includes <code>.dat</code>). If not intercepted, use the URL box below.</div>
+        <div><strong>Badges:</strong> ⚡ Chunked = parallel chunks, ⬇ Normal (CF) = ChunkFlow used native path, 🌐 Browser = started outside ChunkFlow, ⚠ Fallback = chunking failed then native path.</div>
+      </div>
+    </details>
     <div class="chunk-count-row">
       <label for="chunk-count">Chunk count:</label>
       <input type="number" id="chunk-count" min="2" max="32" value="10" title="Number of parallel chunks (2–32)">
     </div>
+    <div class="quick-start-row">
+      <input id="quick-download-url" type="text" placeholder="Paste direct file URL and click Start with ChunkFlow">
+      <button id="quick-start-button">Start with ChunkFlow</button>
+    </div>
+    <div id="chunkflow-runtime-banner" class="runtime-banner" style="display:none;"></div>
     <div id="downloads-list">
       <!-- Downloads will be dynamically populated here -->
     </div>

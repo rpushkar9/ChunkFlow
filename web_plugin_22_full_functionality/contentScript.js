@@ -29,6 +29,7 @@ const isDownloadLink = (element) => {
     '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
     '.mp3', '.mp4', '.avi', '.mkv', '.mov', '.wmv',
     '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg',
+    '.dat', '.csv', '.txt',
     '.exe', '.msi', '.deb', '.rpm', '.dmg', '.pkg',
     '.iso', '.img', '.bin'
   ];
@@ -77,4 +78,3 @@ observer.observe(document.body, {
   childList: true,
   subtree: true
 });
-

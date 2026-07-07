@@ -46,6 +46,15 @@ const Utils = {
     };
   },
 
+  isHttpOrHttpsUrl: (url) => {
+    try {
+      const parsed = new URL(url);
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  },
+
   // Clamp chunk count to valid range. Returns def if value is missing/NaN.
   clampChunkCount: (val, min = 2, max = 32, def = 10) => {
     const n = Number(val);
