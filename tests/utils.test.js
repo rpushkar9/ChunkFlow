@@ -152,53 +152,57 @@ describe('Utils.clampChunkCount', () => {
 });
 
 // ── pending mode queue helpers ────────────────────────────────────────────────
-describe('Utils.enqueueModeForUrl / Utils.consumeModeForUrl', () => {
-  test('enqueue initializes queue for a URL', () => {
-    const map = Utils.enqueueModeForUrl({}, 'https://example.com/file.zip', 'normal');
-    expect(map).toEqual({ 'https://example.com/file.zip': ['normal'] });
+describe('Utils.selectPendingMode', () => {
+  const entry = (mode, at, sourceUrl) => ({ mode, at, sourceUrl });
+
+  test('prefers an exact sourceUrl match over the oldest entry', () => {
+    const queue = [
+      entry('normal', 100, 'https://a.com/1.zip'),
+      entry('chunked', 200, 'blob:x'),
+    ];
+    const { entry: picked, remaining } = Utils.selectPendingMode(queue, 'blob:x', 0);
+    expect(picked.mode).toBe('chunked');
+    expect(remaining).toEqual([entry('normal', 100, 'https://a.com/1.zip')]);
   });
 
-  test('enqueue appends in FIFO order', () => {
-    const first = Utils.enqueueModeForUrl({}, 'https://example.com/file.zip', 'normal');
-    const second = Utils.enqueueModeForUrl(first, 'https://example.com/file.zip', 'fallback');
-    expect(second['https://example.com/file.zip']).toEqual(['normal', 'fallback']);
+  test('falls back to the oldest fresh entry when no URL matches', () => {
+    const queue = [entry('normal', 100, 'https://a.com/1.zip'), entry('fallback', 200, 'https://a.com/2.zip')];
+    const { entry: picked, remaining } = Utils.selectPendingMode(queue, 'https://other.com/x', 0);
+    expect(picked.mode).toBe('normal');
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].mode).toBe('fallback');
   });
 
-  test('consume returns first mode and keeps remainder', () => {
-    const seeded = {
-      'https://example.com/file.zip': ['normal', 'fallback']
-    };
-    const consumed = Utils.consumeModeForUrl(seeded, 'https://example.com/file.zip');
-    expect(consumed.mode).toBe('normal');
-    expect(consumed.pendingModeByUrl).toEqual({
-      'https://example.com/file.zip': ['fallback']
-    });
+  test('drops entries at or before minTimestamp', () => {
+    const queue = [entry('normal', 50, 'https://a.com/1.zip'), entry('chunked', 150, 'https://a.com/2.zip')];
+    const { entry: picked } = Utils.selectPendingMode(queue, 'https://a.com/1.zip', 100);
+    expect(picked.mode).toBe('chunked'); // the stale (50) entry is filtered out first
   });
 
-  test('consume deletes key when queue becomes empty', () => {
-    const seeded = {
-      'https://example.com/file.zip': ['chunked']
-    };
-    const consumed = Utils.consumeModeForUrl(seeded, 'https://example.com/file.zip');
-    expect(consumed.mode).toBe('chunked');
-    expect(consumed.pendingModeByUrl).toEqual({});
+  test('empty / missing queue yields a null entry', () => {
+    expect(Utils.selectPendingMode([], 'x', 0).entry).toBeNull();
+    expect(Utils.selectPendingMode(undefined, 'x', 0).entry).toBeNull();
+  });
+});
+
+describe('Utils.removePendingMode', () => {
+  const entry = (mode, sourceUrl) => ({ mode, at: 1, sourceUrl });
+
+  test('removes the newest entry matching sourceUrl', () => {
+    const queue = [entry('normal', 'u1'), entry('fallback', 'u1'), entry('chunked', 'u2')];
+    const result = Utils.removePendingMode(queue, 'u1');
+    expect(result).toEqual([entry('normal', 'u1'), entry('chunked', 'u2')]);
   });
 
-  test('consume missing URL returns undefined mode and unchanged map', () => {
-    const seeded = { 'https://example.com/other.zip': ['normal'] };
-    const consumed = Utils.consumeModeForUrl(seeded, 'https://example.com/file.zip');
-    expect(consumed.mode).toBeUndefined();
-    expect(consumed.pendingModeByUrl).toEqual(seeded);
+  test('leaves the queue unchanged when nothing matches', () => {
+    const queue = [entry('normal', 'u1')];
+    expect(Utils.removePendingMode(queue, 'nope')).toEqual(queue);
   });
 
-  test('helper operations do not mutate input object', () => {
-    const original = { 'https://example.com/file.zip': ['normal'] };
-    const enqueued = Utils.enqueueModeForUrl(original, 'https://example.com/file.zip', 'fallback');
-    const consumed = Utils.consumeModeForUrl(original, 'https://example.com/file.zip');
-
-    expect(original).toEqual({ 'https://example.com/file.zip': ['normal'] });
-    expect(enqueued).toEqual({ 'https://example.com/file.zip': ['normal', 'fallback'] });
-    expect(consumed.pendingModeByUrl).toEqual({});
+  test('does not mutate the input queue', () => {
+    const queue = [entry('normal', 'u1')];
+    Utils.removePendingMode(queue, 'u1');
+    expect(queue).toHaveLength(1);
   });
 });
 

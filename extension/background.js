@@ -343,30 +343,51 @@ function enqueuePendingMode(url, mode, details = {}) {
   });
 }
 
+// Start a native Chrome download and attribute its mode. The mode is enqueued
+// BEFORE the download so onCreated can consume it even if the worker suspends;
+// if the download fails to start, the queued entry is rolled back so it can't
+// mislabel the next unrelated download.
+function startNativeDownload(sourceUrl, mode, details, filename) {
+  const options = filename ? { url: sourceUrl, filename } : { url: sourceUrl };
+  return enqueuePendingMode(sourceUrl, mode, details).then(() => {
+    chrome.downloads.download(options, (downloadId) => {
+      if (chrome.runtime.lastError || downloadId == null) {
+        console.warn(
+          `[ChunkFlow] native download failed to start (${sourceUrl}): ` +
+          `${chrome.runtime.lastError?.message || 'no download id'}`
+        );
+        withPendingModeStorage((data) => ({
+          updates: { pendingModeQueue: Utils.removePendingMode(data.pendingModeQueue, sourceUrl) }
+        }));
+      }
+    });
+  });
+}
+
 function consumePendingMode(downloadItem) {
   return withPendingModeStorage((data) => {
     const cutoff = Date.now() - 5 * 60 * 1000;
-    let queue = (Array.isArray(data.pendingModeQueue) ? [...data.pendingModeQueue] : [])
-      .filter((entry) => entry.at > cutoff);
-    let pending = null;
-
-    const queued = queue.shift();
-    if (queued) {
-      pending = {
-        mode: queued.mode,
-        source: queued.source || 'chunkflow',
-        reason: queued.reason || '',
-        sourceUrl: queued.sourceUrl || ''
-      };
-    }
+    const createdUrl = downloadItem.url || downloadItem.finalUrl || '';
+    // Prefer the entry whose sourceUrl matches the created download; fall back to
+    // the oldest fresh entry. This stops an unrelated/reordered download from
+    // stealing a ChunkFlow badge (the old logic blindly took the oldest entry).
+    const { entry, remaining } = Utils.selectPendingMode(data.pendingModeQueue, createdUrl, cutoff);
+    const pending = entry
+      ? {
+          mode: entry.mode,
+          source: entry.source || 'chunkflow',
+          reason: entry.reason || '',
+          sourceUrl: entry.sourceUrl || ''
+        }
+      : null;
 
     debugLog(
-      `[ChunkFlow] consumePendingMode: resolvedMode=${pending?.mode || 'none'} queueRemaining=${queue.length} ` +
-      `createdUrl=${downloadItem.url} sourceUrl=${pending?.sourceUrl || 'n/a'}`
+      `[ChunkFlow] consumePendingMode: resolvedMode=${pending?.mode || 'none'} queueRemaining=${remaining.length} ` +
+      `createdUrl=${createdUrl} matched=${pending?.sourceUrl === createdUrl}`
     );
 
     return {
-      updates: { pendingModeQueue: queue },
+      updates: { pendingModeQueue: remaining },
       value: pending
     };
   });
@@ -384,6 +405,10 @@ async function downloadInChunks(url, numberOfChunks = 10) {
   // creates a download item (which only happens after all chunks are assembled).
   await addActiveChunkFetch(url, requestId);
 
+  // Resolved (post-redirect) URL. Defaults to the original; set after HEAD so the
+  // native fallback paths (incl. the catch block) reuse the CDN/auth-bearing URL.
+  let finalUrl = url;
+
   try {
     const headResponse = await fetchWithRetry(url, { method: 'HEAD', credentials: 'include' });
     debugLog('[ChunkFlow] HEAD response received');
@@ -394,7 +419,7 @@ async function downloadInChunks(url, numberOfChunks = 10) {
 
     // Capture the URL after redirects so all chunk GETs go to the same
     // CDN endpoint and use the same auth tokens (critical for Google Drive etc.)
-    const finalUrl = headResponse.url || url;
+    finalUrl = headResponse.url || url;
     const filename  = getFilename(headResponse, url);
 
     let hasRangeSupport = Utils.headAdvertisesByteRanges(headResponse);
@@ -416,10 +441,9 @@ async function downloadInChunks(url, numberOfChunks = 10) {
     if (!hasRangeSupport) {
       debugLog('[ChunkFlow] No range support — using normal download');
       await removeActiveChunkFetch(requestId);
-      await enqueuePendingMode(url, 'normal', {
+      await startNativeDownload(finalUrl, 'normal', {
         reason: `ChunkFlow used native path because range support was unavailable. ${rangeReason}`
-      });
-      chrome.downloads.download({ url, filename });
+      }, filename);
       return;
     }
 
@@ -435,10 +459,9 @@ async function downloadInChunks(url, numberOfChunks = 10) {
       debugLog(`[ChunkFlow] File too large for in-memory chunking ` +
         `(${Utils.formatFileSize(fileSize)} > ${Utils.formatFileSize(CHUNK_MAX_BYTES)}) — using normal download`);
       await removeActiveChunkFetch(requestId);
-      await enqueuePendingMode(url, 'normal', {
+      await startNativeDownload(finalUrl, 'normal', {
         reason: `File exceeded 500 MB in-memory chunking safety limit (${Utils.formatFileSize(fileSize)}).`
-      });
-      chrome.downloads.download({ url, filename });
+      }, filename);
       return;
     }
 
@@ -506,8 +529,12 @@ async function downloadInChunks(url, numberOfChunks = 10) {
     });
     chrome.downloads.download({ url: objectURL, filename }, (downloadId) => {
       if (chrome.runtime.lastError || downloadId == null) {
-        // Download never started — revoke immediately so the blob isn't leaked.
+        // Download never started — revoke the blob and roll back the queued mode
+        // so it can't mislabel the next download.
         revokeObjectUrlInOffscreen(objectURL);
+        withPendingModeStorage((data) => ({
+          updates: { pendingModeQueue: Utils.removePendingMode(data.pendingModeQueue, objectURL) }
+        }));
         return;
       }
       chunkedObjectUrls.set(downloadId, objectURL);
@@ -523,18 +550,18 @@ async function downloadInChunks(url, numberOfChunks = 10) {
       popupPort.postMessage({ type: 'ERROR', message: `Download failed: ${error.message}` });
     }
 
-    // Best-effort fallback to Chrome's native downloader.
+    // Best-effort fallback to Chrome's native downloader (reuse the resolved URL).
     debugLog('[ChunkFlow] Falling back to normal download');
     await removeActiveChunkFetch(requestId);
-    await enqueuePendingMode(url, 'fallback', {
-      reason: `Chunking failed and native Chrome download was used (${error.message}).`
-    });
+    let fallbackName;
     try {
-      const filename = new URL(url).pathname.split('/').pop() || 'downloaded_file';
-      chrome.downloads.download({ url, filename });
+      fallbackName = new URL(finalUrl).pathname.split('/').pop() || 'downloaded_file';
     } catch {
-      chrome.downloads.download({ url });
+      fallbackName = undefined;
     }
+    await startNativeDownload(finalUrl, 'fallback', {
+      reason: `Chunking failed and native Chrome download was used (${error.message}).`
+    }, fallbackName);
   }
 }
 
@@ -726,12 +753,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           debugLog('Retrieving URL for restart. Download ID:', message.downloadId, 'URL:', originalUrl);
           if (originalUrl) {
             chrome.downloads.cancel(message.downloadId, () => {
-              enqueuePendingMode(originalUrl, 'normal', {
+              startNativeDownload(originalUrl, 'normal', {
                 reason: 'Manual restart uses native Chrome download path.'
-              }).then(() => {
-                chrome.downloads.download({ url: originalUrl }, (newDownloadId) => {
-                  debugLog('Restarted download with ID:', newDownloadId, 'URL:', originalUrl);
-                });
               });
             });
           } else {
