@@ -99,7 +99,6 @@ ChunkFlow is a powerful Chrome extension that **accelerates downloads and upload
 - **`contextMenus`**: Right-click "Download with ChunkFlow" option
 - **`offscreen`**: Create the offscreen document that assembles chunks into a blob
 - **Host permissions `http://*/*`, `https://*/*`**: Detect download links and fetch chunks on any site
-- **Optional `management`**: Extension management features
 - **Sender validation**: background ↔ offscreen messages are gated on the trusted sender URL
 
 ## 🚀 Installation & Usage
@@ -174,12 +173,11 @@ ChunkFlow is a powerful Chrome extension that **accelerates downloads and upload
 - **Memory usage**: Large files are assembled in memory during merge
 - **File messaging**: Upload files converted to ArrayBuffer for background processing
 - **Update polling**: Some UI updates still use polling vs pure event-driven
-- **Filename parsing**: Uses URL path, doesn't parse `Content-Disposition` headers
+- **Filename parsing**: Parses `Content-Disposition` (RFC 5987 + quoted) with a URL-path fallback
 
 ## 🔮 Future Roadmap
 - **Stream processing**: Reduce memory usage for very large files  
 - **Smart chunk sizing**: Dynamic chunk count based on file size and connection speed
-- **Content-Disposition parsing**: Better filename detection from HTTP headers
 - **Upload progress UI**: Real-time chunk-level upload progress visualization
 - ~~**Configuration panel**: User-configurable chunk settings~~ ✅ Done in v2.3.0
 - **Download queue**: Batch download management with priority controls
