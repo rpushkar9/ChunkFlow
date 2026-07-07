@@ -1,13 +1,57 @@
-# ChunkFlow - Parallel Download & Upload Chrome Extension
+<div align="center">
 
-**Version:** 2.3.0  
-**Manifest version:** 3
+# ⚡ ChunkFlow
+
+### Parallel, range-based download & upload accelerator for Chrome — built for a data-science lab moving 100 GB–TB datasets.
+
+Splits files into chunks and fetches them in parallel over HTTP **Range** requests, then reassembles
+them into one file — engineering around Manifest V3's hardest constraints. On the lab's workloads it cut
+download times **~25% on typical servers, 40–55% on high-throughput ones**.
+
+![JavaScript](https://img.shields.io/badge/JavaScript-vanilla-F7DF1E?logo=javascript&logoColor=black)
+![Chrome](https://img.shields.io/badge/Chrome-Manifest%20V3-4285F4?logo=googlechrome&logoColor=white)
+![Jest](https://img.shields.io/badge/Jest-50%20passing-C21325?logo=jest&logoColor=white)
+![Playwright](https://img.shields.io/badge/Playwright-e2e-2EAD33?logo=playwright&logoColor=white)
+![Build](https://img.shields.io/badge/build-none%20(load%20unpacked)-lightgrey)
+
+</div>
+
+---
+
+## 📸 Screenshots
+
+| Download history + mode badges | Live chunked download |
+|:------------------------------:|:---------------------:|
+| ![Download history](docs/screenshots/01-download-history.png) | ![Download in progress](docs/screenshots/03-download-progress.png) |
+| *Every download tagged ⚡ Chunked / ⬇ Normal / ⚠ Fallback / 🌐 Browser* | *Parallel chunk assembly with a live "working" banner* |
+
+| Adjustable parallelism | Uploads |
+|:----------------------:|:-------:|
+| ![Chunk count](docs/screenshots/02-chunk-count.png) | ![Uploads tab](docs/screenshots/04-uploads-tab.png) |
+| *Tune 2–32 parallel chunks; persisted across sessions* | *Chunked uploads with preview + history* |
+
+---
 
 ## 🚀 Overview
 ChunkFlow is a powerful Chrome extension that **accelerates downloads and uploads** by splitting files into chunks and processing them in parallel. When servers support HTTP range requests, ChunkFlow can significantly speed up file transfers by downloading/uploading multiple chunks simultaneously, then seamlessly merging them back together.
 
 ## 🎓 Background
 ChunkFlow was originally built during an internship at **iHub — the data-science research hub of the International Institute of Information Technology, Hyderabad (IIIT-H)**, where researchers routinely move **100 GB–TB-scale** datasets and download throughput was a real bottleneck. I **led a small team** (building the majority myself) to ship a portable, non-technical-friendly accelerator the lab could use with no setup or command line. On the lab's workloads it cut download times by roughly **25% on typical servers and 40–55% on high-throughput ones**. This repository is the continued, open-source version of that project.
+
+## ✨ Highlights
+
+- **Parallel range downloads** — fetches N byte-range chunks at once, validates each (`206` +
+  `Content-Range` + exact length), reassembles into one file, and falls back seamlessly when a server or
+  file size can't support chunking.
+- **Built around Manifest V3's hardest limits** — an **offscreen document** does the blob assembly a
+  service worker can't (`URL.createObjectURL` is unavailable there), and a **storage-backed FIFO state
+  machine** stays correct across service-worker suspension.
+- **Reliable under real networks** — a chunk-retry ladder, a **250 MB in-memory guard** against OOM,
+  blob-URL cleanup on every terminal state, and plain-language per-download **mode badges**.
+- **Zero-config, non-technical friendly** — works on any download link (or right-click → *Download with
+  ChunkFlow*); adjustable **2–32** parallel chunks, plus pause / resume / restart / delete.
+- **Tested** — **50 Jest** unit tests plus a **Playwright** end-to-end test that loads the real unpacked
+  extension in Chrome and asserts the download mode.
 
 ## ⚡ Key Features
 
